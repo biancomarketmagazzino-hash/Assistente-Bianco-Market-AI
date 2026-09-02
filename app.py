@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from google import genai
+import google.generativeai as genai
 from data_loader import load_data, FILIALI_MAP
 
 # Configurazione Pagina
@@ -43,7 +43,7 @@ opzione = st.sidebar.radio(
 )
 
 # ------------------------------------------------------------------------------
-# MODALITÀ 1: CHATBOT AI INTELLIGENTE (CON FALLBACK AUTOMATICO ANTI-503)
+# MODALITÀ 1: CHATBOT AI INTELLIGENTE
 # ------------------------------------------------------------------------------
 if opzione == "💬 Chatbot AI":
     st.subheader("🤖 Fai una domanda all'assistente commerciale")
@@ -53,7 +53,8 @@ if opzione == "💬 Chatbot AI":
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
         
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    # Configurazione API Key
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -79,33 +80,16 @@ if opzione == "💬 Chatbot AI":
             Analizza e rispondi alla domanda dell'utente in italiano in modo preciso e sintetico.
             """
 
-            # Lista modelli in ordine di preferenza (Fallback Strategy)
-            MODELLI = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+            # Utilizzo del modello standard stabile
+            model = genai.GenerativeModel('gemini-1.5-flash')
             
-            bot_response = None
-            
-            for modello in MODELLI:
-                try:
-                    response = client.models.generate_content(
-                        model=modello,
-                        contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
-                    )
-                    bot_response = response.text
-                    break # Se funziona, esce dal ciclo ed evita il fallback
-                except Exception as err:
-                    # In caso di errore 503/429/404 tenta immediatamente il modello successivo
-                    if any(code in str(err) for code in ["503", "429", "404"]):
-                        time.sleep(1)
-                        continue
-                    else:
-                        st.error(f"Errore di connessione: {err}")
-                        break
-
-            if bot_response:
+            try:
+                response = model.generate_content(f"{system_prompt}\n\nDomanda utente: {prompt}")
+                bot_response = response.text
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
-            else:
-                st.error("I server Google sono momentaneamente sovraccarichi su tutti i modelli. Riprova tra 10 secondi.")
+            except Exception as err:
+                st.error(f"Errore durante l'elaborazione: {err}")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
