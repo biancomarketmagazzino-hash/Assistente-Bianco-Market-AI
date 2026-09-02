@@ -53,7 +53,9 @@ if opzione == "💬 Chatbot AI":
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
         
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"].strip())
+    # Pulizia della chiave API da eventuali spazi o virgolette residue
+    raw_key = str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
+    client = genai.Client(api_key=raw_key)
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -80,9 +82,10 @@ if opzione == "💬 Chatbot AI":
             """
 
             bot_response = None
-            
-            # Sequenza diretta di modelli disponibili per la generazione
-            candidate_models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+            last_error = None
+
+            # Nomi modelli ufficiali supportati dal client google-genai
+            candidate_models = ['gemini-2.5-flash', 'gemini-2.0-flash']
 
             with st.spinner("Elaborazione dati in corso..."):
                 for mod in candidate_models:
@@ -95,14 +98,14 @@ if opzione == "💬 Chatbot AI":
                             bot_response = response.text
                             break
                     except Exception as e:
-                        # Se il modello non esiste o è occupato, tenta immediatamente il successivo
+                        last_error = e
                         continue
 
             if bot_response:
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
             else:
-                st.error("Nessuna risposta ricevuta dai modelli AI. Verificare la validità della chiave API e lo stato dei Secret.")
+                st.error(f"Errore di comunicazione con l'API: {last_error}")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
