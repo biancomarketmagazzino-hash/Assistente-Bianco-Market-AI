@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 # Assicura che Python trovi data_loader.py
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -8,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from google import genai
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from data_loader import load_data, FILIALI_MAP
 
 # Configurazione Pagina
@@ -42,7 +44,7 @@ opzione = st.sidebar.radio(
 )
 
 # ------------------------------------------------------------------------------
-# MODALITÀ 1: CHATBOT AI INTELLIGENTE
+# MODALITÀ 1: CHATBOT AI INTELLIGENTE (CON RETRY AUTOMATICO ANTI-503)
 # ------------------------------------------------------------------------------
 if opzione == "💬 Chatbot AI":
     st.subheader("🤖 Fai una domanda all'assistente commerciale")
@@ -62,6 +64,33 @@ if opzione == "💬 Chatbot AI":
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    # Funzione decorata con Retry automatico fino a 5 tentativi se il server risponde 503 o 429
+    def is_transient_error(exception):
+        err_str = str(exception)
+        return "503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str
+
+    @retry(
+        retry=retry_if_exception(is_transient_error),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        reraise=True
+    )
+    def call_gemini_api(prompt_text, sys_prompt):
+        # Tenta primariamente il modello principale 3.6-flash, poi 2.5-flash
+        for model_name in ['gemini-3.6-flash', 'gemini-2.5-flash']:
+            try:
+                res = client.models.generate_content(
+                    model=model_name,
+                    contents=f"{sys_prompt}\n\nDomanda utente: {prompt_text}"
+                )
+                if res and res.text:
+                    return res.text
+            except Exception as inner_e:
+                if is_transient_error(inner_e):
+                    raise inner_e  # Attiva il ciclo di retry di tenacity
+                continue
+        return None
+
     if prompt := st.chat_input("Scrivi la tua domanda..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -79,28 +108,16 @@ if opzione == "💬 Chatbot AI":
             Analizza e rispondi alla domanda dell'utente in italiano in modo preciso e sintetico.
             """
 
-            bot_response = None
-            last_error = None
-
-            # Modello ufficiale richiesto dall'errore 404 corrente
-            target_model = 'gemini-3.6-flash'
-
-            with st.spinner("Elaborazione dati in corso..."):
+            with st.spinner("Analisi magazzino in corso... (Gestione picchi di traffico attiva)"):
                 try:
-                    response = client.models.generate_content(
-                        model=target_model,
-                        contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
-                    )
-                    if response and response.text:
-                        bot_response = response.text
-                except Exception as e:
-                    last_error = e
-
-            if bot_response:
-                st.markdown(bot_response)
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
-            else:
-                st.error(f"Errore di comunicazione con l'API: {last_error}")
+                    bot_response = call_gemini_api(prompt, system_prompt)
+                    if bot_response:
+                        st.markdown(bot_response)
+                        st.session_state.messages.append({"role": "assistant", "content": bot_response})
+                    else:
+                        st.error("Risposta vuota ricevuta dai modelli.")
+                except Exception as final_err:
+                    st.error(f"I server Google sono attualmente sovraccarichi. Riprova tra qualche secondo. Dettaglio: {final_err}")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
