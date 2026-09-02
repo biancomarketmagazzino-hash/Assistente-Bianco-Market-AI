@@ -43,13 +43,12 @@ opzione = st.sidebar.radio(
 )
 
 # ------------------------------------------------------------------------------
-# MODALITÀ 1: CHATBOT AI INTELLIGENTE (GEMINI)
+# MODALITÀ 1: CHATBOT AI INTELLIGENTE (CON FALLBACK AUTOMATICO ANTI-503)
 # ------------------------------------------------------------------------------
 if opzione == "💬 Chatbot AI":
     st.subheader("🤖 Fai una domanda all'assistente commerciale")
     st.write("Esempi: *'Quanti pigiami uomo abbiamo a Ragusa e Sciacca?'*, *'Quali sono i brand più venduti a Menfi?'*")
 
-    # Inizializzazione Client Gemini dai Secrets
     if "GEMINI_API_KEY" not in st.secrets:
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
@@ -73,39 +72,40 @@ if opzione == "💬 Chatbot AI":
             Sei l'assistente AI aziendale esperto di magazzino per Bianco Market (azienda specializzata in biancheria per la casa e persona).
             Hai a disposizione 3 data frame Pandas:
 
-            1. `df_articoli`: anagrafica prodotti (codice, descrizione, brand, categoria, ecc.). Colonne: {list(df_articoli.columns)}
-            2. `df_storcar`: storico dei movimenti. Tipi movimento:
-               - S = Scontrino (Vendita)
-               - F = Fattura (Vendita)
-               - T = Trasferimento da Magazzino a Filiale (positivo) o Reso (negativo)
-               - C = Carico Magazzino (da ignorare nelle vendite)
-               Prezzo finale venduto in 'LIST./COSTO AGG', percentuale sconto in 'SCONTO'.
-               Colonne: {list(df_storcar.columns)}
-            3. `df_sit`: matrice delle giacenze attuali per filiale. Colonne: {list(df_sit.columns)}
+            1. `df_articoli`: anagrafica prodotti. Colonne: {list(df_articoli.columns)}
+            2. `df_storcar`: storico movimenti (S/F = Vendite, T = Trasferimenti, C = Carico). Colonne: {list(df_storcar.columns)}
+            3. `df_sit`: giacenze attuali per filiale. Colonne: {list(df_sit.columns)}
 
-            Analizza e rispondi alla domanda dell'utente in italiano in modo preciso, professionale e sintetico.
+            Analizza e rispondi alla domanda dell'utente in italiano in modo preciso e sintetico.
             """
 
-            # Sistema di riprova automatica per gestire eventuali saturazioni server (503/429)
-            max_retries = 3
+            # Lista modelli in ordine di preferenza (Fallback Strategy)
+            MODELLI = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
             
-            for attempt in range(max_retries):
+            bot_response = None
+            
+            for modello in MODELLI:
                 try:
                     response = client.models.generate_content(
-                        model='gemini-3.6-flash',
+                        model=modello,
                         contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
                     )
                     bot_response = response.text
-                    st.markdown(bot_response)
-                    st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                    break
+                    break # Se funziona, esce dal ciclo ed evita il fallback
                 except Exception as err:
-                    if ("503" in str(err) or "429" in str(err)) and attempt < max_retries - 1:
-                        time.sleep(2)  # Attende 2 secondi prima di riprovare
+                    # In caso di errore 503/429/404 tenta immediatamente il modello successivo
+                    if any(code in str(err) for code in ["503", "429", "404"]):
+                        time.sleep(1)
                         continue
                     else:
-                        st.error(f"Errore durante la comunicazione con Gemini: {err}")
+                        st.error(f"Errore di connessione: {err}")
                         break
+
+            if bot_response:
+                st.markdown(bot_response)
+                st.session_state.messages.append({"role": "assistant", "content": bot_response})
+            else:
+                st.error("I server Google sono momentaneamente sovraccarichi su tutti i modelli. Riprova tra 10 secondi.")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
