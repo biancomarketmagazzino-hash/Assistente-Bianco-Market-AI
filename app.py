@@ -53,7 +53,8 @@ if opzione == "💬 Chatbot AI":
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
         
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    api_key = st.secrets["GEMINI_API_KEY"].str.strip() if hasattr(st.secrets["GEMINI_API_KEY"], 'str') else st.secrets["GEMINI_API_KEY"].strip()
+    genai.configure(api_key=api_key)
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -79,24 +80,37 @@ if opzione == "💬 Chatbot AI":
             Analizza e rispondi alla domanda dell'utente in italiano in modo preciso e sintetico.
             """
 
-            # Fallback tra le due versioni stabili supportate dall'endpoint
-            modelli_validi = ['gemini-2.5-flash', 'gemini-2.0-flash']
+            # Individua automaticamente i modelli abilitati sulla tua API Key
             bot_response = None
-
-            for mod in modelli_validi:
-                try:
-                    model = genai.GenerativeModel(mod)
-                    response = model.generate_content(f"{system_prompt}\n\nDomanda utente: {prompt}")
-                    bot_response = response.text
-                    break
-                except Exception:
-                    continue
+            last_err = None
+            
+            try:
+                # Cerca i modelli che supportano la generazione di testo
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                
+                # Seleziona in priorità quelli con la stringa 'flash'
+                flash_models = [m for m in available_models if 'flash' in m.lower()]
+                target_models = flash_models + [m for m in available_models if m not in flash_models]
+                
+                for mod_name in target_models:
+                    try:
+                        model = genai.GenerativeModel(mod_name)
+                        response = model.generate_content(f"{system_prompt}\n\nDomanda utente: {prompt}")
+                        bot_response = response.text
+                        break
+                    except Exception as e:
+                        last_err = e
+                        continue
+            except Exception as e:
+                last_err = e
 
             if bot_response:
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
             else:
-                st.error("Impossibile connettersi ai modelli Gemini. Verificare la chiave API nei Secrets.")
+                st.error(f"Errore di connessione con l'API Key. Dettaglio: {last_err}")
+
+# ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
 # ------------------------------------------------------------------------------
 elif opzione == "📊 Dashboard Giacenze":
