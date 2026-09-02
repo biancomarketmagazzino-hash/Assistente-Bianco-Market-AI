@@ -1,6 +1,5 @@
 import sys
 import os
-import time
 
 # Assicura che Python trovi data_loader.py
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -53,7 +52,6 @@ if opzione == "💬 Chatbot AI":
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
         
-    # Pulizia della chiave API da eventuali spazi o virgolette residue
     raw_key = str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
     client = genai.Client(api_key=raw_key)
 
@@ -84,22 +82,19 @@ if opzione == "💬 Chatbot AI":
             bot_response = None
             last_error = None
 
-            # Nomi modelli ufficiali supportati dal client google-genai
-            candidate_models = ['gemini-2.5-flash', 'gemini-2.0-flash']
+            # Modello ufficiale richiesto dall'errore 404 corrente
+            target_model = 'gemini-3.6-flash'
 
             with st.spinner("Elaborazione dati in corso..."):
-                for mod in candidate_models:
-                    try:
-                        response = client.models.generate_content(
-                            model=mod,
-                            contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
-                        )
-                        if response and response.text:
-                            bot_response = response.text
-                            break
-                    except Exception as e:
-                        last_error = e
-                        continue
+                try:
+                    response = client.models.generate_content(
+                        model=target_model,
+                        contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
+                    )
+                    if response and response.text:
+                        bot_response = response.text
+                except Exception as e:
+                    last_error = e
 
             if bot_response:
                 st.markdown(bot_response)
