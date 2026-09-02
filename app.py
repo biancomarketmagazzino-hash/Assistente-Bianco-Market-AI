@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import google.generativeai as genai
+from google import genai
 from data_loader import load_data, FILIALI_MAP
 
 # Configurazione Pagina
@@ -53,8 +53,7 @@ if opzione == "💬 Chatbot AI":
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
         
-    api_key = st.secrets["GEMINI_API_KEY"].str.strip() if hasattr(st.secrets["GEMINI_API_KEY"], 'str') else st.secrets["GEMINI_API_KEY"].strip()
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"].strip())
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -80,35 +79,30 @@ if opzione == "💬 Chatbot AI":
             Analizza e rispondi alla domanda dell'utente in italiano in modo preciso e sintetico.
             """
 
-            # Individua automaticamente i modelli abilitati sulla tua API Key
             bot_response = None
-            last_err = None
             
-            try:
-                # Cerca i modelli che supportano la generazione di testo
-                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                
-                # Seleziona in priorità quelli con la stringa 'flash'
-                flash_models = [m for m in available_models if 'flash' in m.lower()]
-                target_models = flash_models + [m for m in available_models if m not in flash_models]
-                
-                for mod_name in target_models:
+            # Sequenza diretta di modelli disponibili per la generazione
+            candidate_models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+
+            with st.spinner("Elaborazione dati in corso..."):
+                for mod in candidate_models:
                     try:
-                        model = genai.GenerativeModel(mod_name)
-                        response = model.generate_content(f"{system_prompt}\n\nDomanda utente: {prompt}")
-                        bot_response = response.text
-                        break
+                        response = client.models.generate_content(
+                            model=mod,
+                            contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
+                        )
+                        if response and response.text:
+                            bot_response = response.text
+                            break
                     except Exception as e:
-                        last_err = e
+                        # Se il modello non esiste o è occupato, tenta immediatamente il successivo
                         continue
-            except Exception as e:
-                last_err = e
 
             if bot_response:
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
             else:
-                st.error(f"Errore di connessione con l'API Key. Dettaglio: {last_err}")
+                st.error("Nessuna risposta ricevuta dai modelli AI. Verificare la validità della chiave API e lo stato dei Secret.")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
