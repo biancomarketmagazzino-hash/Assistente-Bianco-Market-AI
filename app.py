@@ -53,7 +53,6 @@ if opzione == "💬 Chatbot AI":
         st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
         st.stop()
         
-    # Configurazione API Key
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
     if "messages" not in st.session_state:
@@ -80,18 +79,24 @@ if opzione == "💬 Chatbot AI":
             Analizza e rispondi alla domanda dell'utente in italiano in modo preciso e sintetico.
             """
 
-            # Utilizzo del modello standard stabile
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            try:
-                response = model.generate_content(f"{system_prompt}\n\nDomanda utente: {prompt}")
-                bot_response = response.text
+            # Fallback tra le due versioni stabili supportate dall'endpoint
+            modelli_validi = ['gemini-2.5-flash', 'gemini-2.0-flash']
+            bot_response = None
+
+            for mod in modelli_validi:
+                try:
+                    model = genai.GenerativeModel(mod)
+                    response = model.generate_content(f"{system_prompt}\n\nDomanda utente: {prompt}")
+                    bot_response = response.text
+                    break
+                except Exception:
+                    continue
+
+            if bot_response:
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
-            except Exception as err:
-                st.error(f"Errore durante l'elaborazione: {err}")
-
-# ------------------------------------------------------------------------------
+            else:
+                st.error("Impossibile connettersi ai modelli Gemini. Verificare la chiave API nei Secrets.")
 # MODALITÀ 2: DASHBOARD GIACENZE
 # ------------------------------------------------------------------------------
 elif opzione == "📊 Dashboard Giacenze":
