@@ -76,26 +76,28 @@ if opzione == "💬 Chatbot AI":
             bot_response = None
             last_error = None
 
+            # Fallback sequenziale: passa al modello successivo se il primo restituisce 503 o errori di carico
+            modelli_fallback = ['gemini-3.6-flash', 'gemini-3.0-flash', 'gemini-1.5-flash']
+
             with st.spinner("Elaborazione risposta..."):
-                try:
-                    # Chiamata al modello aggiornato gemini-3.6-flash
-                    response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
-                    )
-                    if response and response.text:
-                        bot_response = response.text
-                except Exception as e:
-                    last_error = str(e)
+                for mod in modelli_fallback:
+                    try:
+                        response = client.models.generate_content(
+                            model=mod,
+                            contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
+                        )
+                        if response and response.text:
+                            bot_response = response.text
+                            break
+                    except Exception as e:
+                        last_error = str(e)
+                        continue
 
             if bot_response:
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
             else:
-                if "503" in str(last_error) or "UNAVAILABLE" in str(last_error):
-                    st.warning("⚠️ I server di Google sono momentaneamente saturi. Riprova tra qualche secondo reinviando il messaggio.")
-                else:
-                    st.error(f"Errore di comunicazione: {last_error}")
+                st.error(f"Impossibile completare la richiesta. Dettaglio: {last_error}")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
