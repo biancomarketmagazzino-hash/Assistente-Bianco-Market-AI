@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from google import genai
+from openai import OpenAI
 from data_loader import load_data, FILIALI_MAP
 
 # Configurazione Pagina
@@ -53,7 +53,12 @@ if opzione == "💬 Chatbot AI":
         st.stop()
         
     raw_key = str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
-    client = genai.Client(api_key=raw_key)
+    
+    # Inizializzazione del client compatibile OpenAI su endpoint Google
+    client = OpenAI(
+        api_key=raw_key,
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -76,15 +81,17 @@ if opzione == "💬 Chatbot AI":
             bot_response = None
             last_error = None
 
-            # Utilizzo dell'alias di sistema 'gemini-flash' per auto-instradamento diretto
             with st.spinner("Elaborazione risposta..."):
                 try:
-                    response = client.models.generate_content(
-                        model='gemini-flash',
-                        contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
+                    response = client.chat.completions.create(
+                        model="gemini-1.5-flash",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}
+                        ]
                     )
-                    if response and response.text:
-                        bot_response = response.text
+                    if response and response.choices:
+                        bot_response = response.choices[0].message.content
                 except Exception as e:
                     last_error = str(e)
 
@@ -93,9 +100,9 @@ if opzione == "💬 Chatbot AI":
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
             else:
                 if "503" in str(last_error) or "UNAVAILABLE" in str(last_error):
-                    st.warning("⚠️ I server Google sono momentaneamente sotto picco di traffico. Riavvia la domanda tra qualche secondo.")
+                    st.warning("⚠️ I server sono momentaneamente sovraccarichi. Riprova tra qualche secondo.")
                 else:
-                    st.error(f"Errore di comunicazione API: {last_error}")
+                    st.error(f"Errore di comunicazione: {last_error}")
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
