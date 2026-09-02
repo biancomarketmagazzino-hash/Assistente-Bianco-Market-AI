@@ -87,7 +87,7 @@ if opzione == "💬 Chatbot AI":
 
             try:
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.6-flash',
                     contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
                 )
                 bot_response = response.text
