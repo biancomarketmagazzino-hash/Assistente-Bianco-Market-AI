@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 # Assicura che Python trovi data_loader.py
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -85,16 +86,28 @@ if opzione == "💬 Chatbot AI":
             Analizza e rispondi alla domanda dell'utente in italiano in modo preciso, professionale e sintetico.
             """
 
-            try:
-                response = client.models.generate_content(
-                    model='gemini-3.0-flash',
-                    contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
-                )
-                bot_response = response.text
-                st.markdown(bot_response)
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
-            except Exception as err:
-                st.error(f"Errore durante la comunicazione con Gemini: {err}")
+            # Sistema di riprova automatica per gestire eventuali saturazioni server (503/429)
+            max_retries = 3
+            success = False
+            
+            for attempt in range(max_retries):
+                try:
+                    response = client.models.generate_content(
+                        model='gemini-1.5-flash',
+                        contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
+                    )
+                    bot_response = response.text
+                    st.markdown(bot_response)
+                    st.session_state.messages.append({"role": "assistant", "content": bot_response})
+                    success = True
+                    break
+                except Exception as err:
+                    if ("503" in str(err) or "429" in str(err)) and attempt < max_retries - 1:
+                        time.sleep(2)  # Attende 2 secondi prima di riprovare
+                        continue
+                    else:
+                        st.error(f"Errore durante la comunicazione con Gemini: {err}")
+                        break
 
 # ------------------------------------------------------------------------------
 # MODALITÀ 2: DASHBOARD GIACENZE
