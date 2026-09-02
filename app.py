@@ -68,7 +68,6 @@ if opzione == "💬 Chatbot AI":
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            # Prompt ottimizzato e snello per evitare il sovraccarico di token
             system_prompt = (
                 "Sei l'assistente AI per Bianco Market (azienda specializzata in biancheria per la casa e persona). "
                 "Rispondi in modo professionale, chiaro e sintetico alla domanda sul magazzino o sulle vendite."
@@ -79,9 +78,9 @@ if opzione == "💬 Chatbot AI":
 
             with st.spinner("Elaborazione risposta..."):
                 try:
-                    # Chiamata diretta ed immediata senza cicli di retry bloccanti
+                    # Chiamata al modello aggiornato gemini-3.6-flash
                     response = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.6-flash',
                         contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
                     )
                     if response and response.text:
@@ -94,7 +93,7 @@ if opzione == "💬 Chatbot AI":
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
             else:
                 if "503" in str(last_error) or "UNAVAILABLE" in str(last_error):
-                    st.warning("⚠️I server di Google sono momentaneamente saturi. Riprova tra pochi secondi premendo Invio.")
+                    st.warning("⚠️ I server di Google sono momentaneamente saturi. Riprova tra qualche secondo reinviando il messaggio.")
                 else:
                     st.error(f"Errore di comunicazione: {last_error}")
 
