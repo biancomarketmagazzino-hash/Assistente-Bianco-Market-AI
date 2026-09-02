@@ -88,18 +88,16 @@ if opzione == "💬 Chatbot AI":
 
             # Sistema di riprova automatica per gestire eventuali saturazioni server (503/429)
             max_retries = 3
-            success = False
             
             for attempt in range(max_retries):
                 try:
                     response = client.models.generate_content(
-                        model='gemini-1.5-flash',
+                        model='gemini-2.5-flash',
                         contents=f"{system_prompt}\n\nDomanda utente: {prompt}"
                     )
                     bot_response = response.text
                     st.markdown(bot_response)
                     st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                    success = True
                     break
                 except Exception as err:
                     if ("503" in str(err) or "429" in str(err)) and attempt < max_retries - 1:
