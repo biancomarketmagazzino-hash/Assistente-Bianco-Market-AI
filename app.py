@@ -1,132 +1,153 @@
-import sys
-import os
-
-# Assicura che Python trovi data_loader.py
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from openai import OpenAI
-from data_loader import load_data, FILIALI_MAP
+from google import genai
+from google.genai import types
 
-# Configurazione Pagina
+# ---------------------------------------------------------
+# CONFIGURAZIONE PAGINA
+# ---------------------------------------------------------
 st.set_page_config(
-    page_title="Bianco Market AI Assistant", 
-    layout="wide", 
-    page_icon="🛍️"
+    page_title="Bianco Market - AI Assistant",
+    page_icon="📦",
+    layout="wide"
 )
 
-st.title("🛍️ Bianco Market - Assistente AI & Gestione Magazzino")
+st.title("📦 Assistant Bianco Market")
+st.caption("Gestionale Intelligente per Giacenze, Vendite e Riassortimenti")
 
-# ------------------------------------------------------------------------------
+# ---------------------------------------------------------
 # CARICAMENTO DATI
-# ------------------------------------------------------------------------------
+# ---------------------------------------------------------
 @st.cache_data
-def get_data():
-    return load_data()
+def load_data():
+    # Sostituisci con il percorso del tuo file o database
+    try:
+        df = pd.read_csv("dati_inventario.csv")
+        return df
+    except FileNotFoundError:
+        # Dati demo se il file non esiste ancora
+        data = {
+            "Filiale": ["Ragusa", "Ragusa", "Modica", "Modica"],
+            "Fornitore": ["Caleffi", "Cotonella", "Caleffi", "Cotonella"],
+            "Marca": ["Caleffi", "Cotonella", "Caleffi", "Cotonella"],
+            "Categoria": ["Tessile Casa", "Intimo", "Tessile Casa", "Intimo"],
+            "Tipo_Articolo": ["Lenzuolo Matrimoniale", "Pigiama Uomo C/cot", "Lenzuolo Matrimoniale", "Pigiama Uomo C/cot"],
+            "Taglia": ["Unica", "L", "Unica", "M"],
+            "Esistenza": [12, 2, 5, 0],
+            "Venduto_30gg": [10, 15, 8, 12],
+            "Scorta_Minima": [5, 5, 5, 5]
+        }
+        return pd.DataFrame(data)
 
-try:
-    df_articoli, df_storcar, df_sit = get_data()
-except Exception as e:
-    st.error(f"Errore nel caricamento dei dati: {e}")
+df = load_data()
+
+# ---------------------------------------------------------
+# CONFIGURAZIONE GEMINI API
+# ---------------------------------------------------------
+api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else st.sidebar.text_input("Inserisci Gemini API Key:", type="password")
+
+if not api_key:
+    st.warning("Inserisci la tua chiave API Gemini nei Secrets di Streamlit o nella barra laterale per proseguire.")
     st.stop()
 
-# ------------------------------------------------------------------------------
-# SIDEBAR
-# ------------------------------------------------------------------------------
-st.sidebar.header("📌 Menu di Controllo")
-opzione = st.sidebar.radio(
-    "Seleziona Modalità:", 
-    ["💬 Chatbot AI", "📊 Dashboard Giacenze", "📦 Suggerimento Riassortimento"]
+client = genai.Client(api_key=api_key)
+
+# ---------------------------------------------------------
+# BARRA LATERALE: STATISTICHE E FILTRI RAPIDI
+# ---------------------------------------------------------
+st.sidebar.header("🔍 Vista Rapida Magazzino")
+filiale_selected = st.sidebar.multiselect("Filtra per Filiale:", options=df["Filiale"].unique(), default=df["Filiale"].unique())
+df_filtered = df[df["Filiale"].isin(filiale_selected)]
+
+st.sidebar.metric("Totale Pezzi in Giacenza", df_filtered["Esistenza"].sum())
+st.sidebar.metric("Totale Venduto (30gg)", df_filtered["Venduto_30gg"].sum())
+
+# Calcolo articoli da riassortire (Giacenza < Scorta Minima)
+da_riassortire = df_filtered[df_filtered["Esistenza"] < df_filtered["Scorta_Minima"]]
+st.sidebar.error(f"Articoli sotto Scorta Minima: {len(da_riassortire)}")
+
+# Export Report rapido
+st.sidebar.subheader("📄 Reportistica")
+csv_data = df_filtered.to_csv(index=False).encode('utf-8')
+st.sidebar.download_button(
+    label="📥 Scarica Report Filiali (CSV)",
+    data=csv_data,
+    file_name="report_bianco_market.csv",
+    mime="text/csv"
 )
 
-# ------------------------------------------------------------------------------
-# MODALITÀ 1: CHATBOT AI INTELLIGENTE
-# ------------------------------------------------------------------------------
-if opzione == "💬 Chatbot AI":
-    st.subheader("🤖 Fai una domanda all'assistente commerciale")
-    st.write("Esempi: *'Quanti pigiami uomo abbiamo a Ragusa e Sciacca?'*, *'Quali sono i brand più venduti a Menfi?'*")
+# ---------------------------------------------------------
+# CHATBOT AI CON GEMINI
+# ---------------------------------------------------------
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        {"role": "assistant", "content": "Ciao! Sono l'assistente di **Bianco Market**. Chiedimi pure giacenze, vendite o consigli sugli ordini di riassortimento per le tue filiali."}
+    ]
 
-    if "GEMINI_API_KEY" not in st.secrets:
-        st.warning("⚠️ Inserisci la chiave `GEMINI_API_KEY` nella sezione Secrets di Streamlit Cloud.")
-        st.stop()
-        
-    raw_key = str(st.secrets["GEMINI_API_KEY"]).strip().strip('"').strip("'")
+# Visualizzazione della cronologia chat
+for msg in st.session_state.messages:
+    st.chat_message(msg["role"]).write(msg["content"])
+
+# Input dell'utente
+if prompt := st.chat_input("Es: Quante giacenze abbiamo di Pigiama Uomo C/cot a Ragusa?"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").write(prompt)
+
+    # Contesto fornito all'IA per la query
+    system_instruction = f"""
+    Sei l'assistente intelligente per l'azienda Bianco Market.
+    Hai accesso immediato ai seguenti dati di inventario e vendite aggiornati:
     
-    # Inizializzazione del client compatibile OpenAI su endpoint Google
-    client = OpenAI(
-        api_key=raw_key,
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-    )
+    {df_filtered.to_string(index=False)}
+    
+    Istruzioni operative:
+    1. Rispondi in modo preciso basandoti ESCLUSIVAMENTE sui dati sopra riportati.
+    2. Se l'utente chiede il calcolo per il riassortimento, consiglia di ordinare la quantità necessaria per coprire le vendite stimate mantenendo la scorta minima.
+    3. Rispondi sempre in modo professionale, sintetico e chiaro.
+    """
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if prompt := st.chat_input("Scrivi la tua domanda..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            system_prompt = (
-                "Sei l'assistente AI per Bianco Market (azienda specializzata in biancheria per la casa e persona). "
-                "Rispondi in modo professionale, chiaro e sintetico alla domanda sul magazzino o sulle vendite."
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2 # Bassa temperatura per risposte precise sui dati
             )
+        )
+        
+        reply = response.text
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.chat_message("assistant").write(reply)
 
-            bot_response = None
-            last_error = None
+    except Exception as e:
+        st.error(f"Errore nella generazione della risposta: {e}")
 
-            with st.spinner("Elaborazione risposta..."):
-                try:
-                    response = client.chat.completions.create(
-                        model="gemini-1.5-flash",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt}
-                        ]
-                    )
-                    if response and response.choices:
-                        bot_response = response.choices[0].message.content
-                except Exception as e:
-                    last_error = str(e)
+# ---------------------------------------------------------
+# SEZIONE GRAFICI E ANALISI
+# ---------------------------------------------------------
+st.divider()
+st.subheader("📊 Analisi Grafica")
 
-            if bot_response:
-                st.markdown(bot_response)
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
-            else:
-                if "503" in str(last_error) or "UNAVAILABLE" in str(last_error):
-                    st.warning("⚠️ I server sono momentaneamente sovraccarichi. Riprova tra qualche secondo.")
-                else:
-                    st.error(f"Errore di comunicazione: {last_error}")
+col1, col2 = st.columns(2)
 
-# ------------------------------------------------------------------------------
-# MODALITÀ 2: DASHBOARD GIACENZE
-# ------------------------------------------------------------------------------
-elif opzione == "📊 Dashboard Giacenze":
-    st.subheader("📈 Analisi Esistenze per Filiale")
-    
-    filiale_sel = st.selectbox("Seleziona Filiale:", list(FILIALI_MAP.values()))
-    
-    if filiale_sel in df_sit.columns:
-        df_filiale = df_sit[df_sit[filiale_sel] > 0][['CODICE', filiale_sel]]
-        st.write(f"Totale articoli con giacenza positiva a **{filiale_sel}**: `{len(df_filiale)}`")
-        st.dataframe(df_filiale.head(50), use_container_width=True)
-    else:
-        st.info("Dati giacenza non disponibili per la filiale selezionata.")
+with col1:
+    fig_giacenze = px.bar(
+        df_filtered, 
+        x="Tipo_Articolo", 
+        y="Esistenza", 
+        color="Filiale", 
+        barmode="group",
+        title="Giacenze per Articolo e Filiale"
+    )
+    st.plotly_chart(fig_giacenze, use_container_width=True)
 
-# ------------------------------------------------------------------------------
-# MODALITÀ 3: SUGGERIMENTO RIASSORTIMENTO
-# ------------------------------------------------------------------------------
-elif opzione == "📦 Suggerimento Riassortimento":
-    st.subheader("🧮 Calcolo automatico della quantità da ordinare")
-    st.info("L'algoritmo incrocia il venduto storico (S/F) con la giacenza attuale per calcolare la stima di riassortimento.")
-    
-    giorni_copertura = st.slider("Giorni di copertura desiderati:", 15, 90, 30)
-    
-    if st.button("Calcola Riassortimento"):
-        st.success(f"Analisi calcolata per una copertura target di {giorni_copertura} giorni.")
+with col2:
+    fig_vendite = px.pie(
+        df_filtered, 
+        values="Venduto_30gg", 
+        names="Categoria", 
+        title="Distribuzione Vendite (30gg) per Categoria"
+    )
+    st.plotly_chart(fig_vendite, use_container_width=True)
