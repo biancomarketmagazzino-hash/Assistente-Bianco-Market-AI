@@ -4,84 +4,87 @@ import re
 
 SYSTEM_PROMPT = """
 Sei l'assistente AI aziendale di Bianco Market. Il tuo compito è rispondere alle domande commerciali, di magazzino e di riassortimento.
-Per farlo, converti le domande dell'utente in una query SQL valida per DuckDB.
+Per farlo, converti la domanda dell'utente in una query SQL compatibile con DuckDB.
 
-SCHEMA TABELLE DISPONIBILI:
+SCHEMA DEL DATABASE:
 1. articoli(codice, barcode, descrizione, um, categoria, marca, fornitore, iva, prezzo_base, costo_base)
 2. giacenze(codice, Magazzino, Sciacca, Menfi, Marsala, Trapani, Ragusa, Sabella, "Mazara del Vallo", "Casa Market", "Sport Market")
+   IMPORTANTE: Le colonne con spazi come "Mazara del Vallo", "Casa Market", "Sport Market" devono avere i doppi apici!
 3. storico_movimenti(tipo_mov, data, doc_rif, codice, qta, listino, sconto, prezzo_effettivo, filiale_cod, filiale_nome)
 
 REGOLE SQL TASSATIVE:
-- Nelle vendite (tipo_mov = 'S' o 'F'), la qta nel database è negativa (es: -2). Quindi per calcolare i pezzi venduti usa SUM(ABS(qta)) oppure -SUM(qta).
-- tipo_mov = 'T' indica trasferimenti interni da magazzino a filiale.
-- Per il riassortimento calcola: (Venduto del periodo) - (Giacenza Attuale della filiale o di magazzino).
-- Usa sempre la clausola ILIKE con il carattere percentuale per le ricerche testuali su descrizioni, marche e categorie (es: descrizione ILIKE '%PIGIAMA%').
-- Fai JOIN tra articoli, giacenze e storico_movimenti usando sempre il campo 'codice'.
-- Seleziona sempre le colonne più descrittive (es. codice, descrizione, qta venduta, giacenze).
-- Rispondi ESCLUSIVAMENTE con il codice SQL racchiuso tra ```sql e ```. Nessun testo prima o dopo.
+- Nelle vendite (tipo_mov = 'S' o 'F'), la quantità (qta) è negativa. Per calcolare i pezzi venduti usa SEMPRE: SUM(ABS(qta)) oppure -SUM(qta).
+- tipo_mov = 'T' indica trasferimenti interni tra Magazzino e Filiali.
+- Se l'utente chiede il "riassortimento", confronta il venduto (SUM(ABS(qta))) con la giacenza attuale.
+- Usa sempre la clausola ILIKE per le ricerche testuali con il carattere jolly % (es: a.descrizione ILIKE '%PIGIAMA%').
+- Fai JOIN tra le tabelle usando il campo 'codice'.
+- Quando usi GROUP BY, includi tutte le colonne non aggregate presenti nella SELECT.
+- Rispondi ESCLUSIVAMENTE con il codice SQL puro, senza commenti, spiegazioni o saluti. Racchiudilo tra ```sql e ```.
 """
 
-def get_sql_query(user_question: str, api_key: str):
+def clean_sql(raw_text: str) -> str:
+    """Estrae solo la stringa SQL pulita."""
+    match = re.search(r"```(?:sql)?\s*(.*?)\s*```", raw_text, re.DOTALL | re.IGNORECASE)
+    if match:
+        query = match.group(1).strip()
+    else:
+        query = raw_text.strip()
+    # Rimuove eventuali punti e virgola finali o spazi superflui
+    return query.rstrip(';')
+
+def get_sql_query(user_question: str, api_key: str) -> str:
     client = Groq(api_key=api_key)
     
-    # Lista di modelli supportati in ordine di preferenza
-    models_to_try = [
-        "llama-3.1-70b-versatile",
-        "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768"
-    ]
+    # Solo modelli attivi su Groq Cloud
+    models = ["llama-3.1-8b-instant", "gemma2-9b-it"]
     
-    last_error = None
-    for model_name in models_to_try:
+    last_err = None
+    for model in models:
         try:
-            response = client.chat.completions.create(
-                model=model_name,
+            res = client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_question}
                 ],
                 temperature=0.0
             )
-            content = response.choices[0].message.content
-            match = re.search(r"```sql\s*(.*?)\s*```", content, re.DOTALL)
-            if match:
-                return match.group(1)
-            return content.strip()
+            raw_content = res.choices[0].message.content
+            return clean_sql(raw_content)
         except Exception as e:
-            last_error = e
+            last_err = e
             continue
+            
+    raise last_err
 
-    raise last_error
-
-def explain_results(user_question: str, df_results, api_key: str):
+def explain_results(user_question: str, df_results, api_key: str) -> str:
     client = Groq(api_key=api_key)
     
+    # Se il dataframe è vuoto, rispondiamo subito
+    if df_results.empty:
+        return "⚠️ La ricerca non ha prodotto risultati. Verifica se i termini usati (descrizione, filiale o codice) sono corretti."
+
     prompt = f"""
-    L'utente ha chiesto: "{user_question}"
-    I dati estratti dal database di Bianco Market sono i seguenti (primi 15 record):
+    Domanda dell'utente Bianco Market: "{user_question}"
+    Dati estratti dal database (primi record):
     {df_results.head(15).to_markdown()}
 
-    Fornisci una risposta da consulente commerciale di Bianco Market:
-    - Sii chiaro, sintetico e professionale.
-    - Se l'utente ha chiesto un riassortimento o giacenze, evidenzia le criticità (es. scorte esaurite o sottoscorta).
+    Fornisci una risposta commerciale, chiara e professionale:
+    - Evidenzia i numeri principali (pezzi venduti, scorte rimaste, filiali coinvolte).
+    - Se l'utente chiedeva un riassortimento, indica chiaramente cosa ordinare con urgenza.
     - Usa elenchi puntati per facilitare la lettura.
     """
     
-    models_to_try = [
-        "llama-3.1-70b-versatile",
-        "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768"
-    ]
-    
-    for model_name in models_to_try:
+    models = ["llama-3.1-8b-instant", "gemma2-9b-it"]
+    for model in models:
         try:
-            response = client.chat.completions.create(
-                model=model_name,
+            res = client.chat.completions.create(
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
-            return response.choices[0].message.content
+            return res.choices[0].message.content
         except Exception:
             continue
-            
-    return "Ecco i risultati elaborati dal database in base alla tua richiesta:"
+
+    return "Ecco i dati estratti in base alla tua richiesta:"
