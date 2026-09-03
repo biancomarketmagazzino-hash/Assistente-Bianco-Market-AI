@@ -106,23 +106,35 @@ if prompt := st.chat_input("Es: Quante giacenze abbiamo di Pigiama Uomo C/cot a 
     2. Se l'utente chiede il calcolo per il riassortimento, consiglia di ordinare la quantità necessaria per coprire le vendite stimate mantenendo la scorta minima.
     3. Rispondi sempre in modo professionale, sintetico e chiaro.
     """
-
     try:
+        # Tentativo con il modello principale
         response = client.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=0.2 # Bassa temperatura per risposte precise sui dati
+                temperature=0.2 
             )
         )
-        
         reply = response.text
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        st.chat_message("assistant").write(reply)
 
     except Exception as e:
-        st.error(f"Errore nella generazione della risposta: {e}")
+        # Se c'è un sovraccarico (503) o qualsiasi errore, prova un modello alternativo stabile
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-pro",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.2 
+                )
+            )
+            reply = response.text + "\n\n*(Nota: Risposta generata con modello di riserva a causa di traffico elevato)*"
+        except Exception as e_fallback:
+            reply = f"I server di Google sono momentaneamente sovraccarichi (Errore 503). Per favore, attendi qualche secondo e riprova a inviare il messaggio."
+
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+    st.chat_message("assistant").write(reply)
 
 # ---------------------------------------------------------
 # SEZIONE GRAFICI E ANALISI
