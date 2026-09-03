@@ -109,7 +109,7 @@ if prompt := st.chat_input("Es: Quante giacenze abbiamo di Pigiama Uomo C/cot a 
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
