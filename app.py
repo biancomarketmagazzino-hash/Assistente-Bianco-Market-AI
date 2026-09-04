@@ -10,9 +10,7 @@ import plotly.express as px
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Bianco Market - Assistant & Inventory AI",
-    page_icon="🛍️",
-    page_layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # ---------------------------------------------------------
@@ -32,7 +30,7 @@ FILIALI_MAP = {
 }
 
 # ---------------------------------------------------------
-# FUNZIONI DI CARICAMENTO DATI CACHATE
+# FUNZIONI DI CARICAMENTO DATI
 # ---------------------------------------------------------
 
 @st.cache_data(ttl=3600)
@@ -50,25 +48,23 @@ def load_articoli():
         dtype=str
     )
     
-    # Mappatura basata sui 42 campi della tabella ARTICOLI.TXT
     col_mapping = {
         0: 'CODICE_ART',
         1: 'CODICE_ALT',
         2: 'DESCRIZION',
         3: 'UM',
-        4: 'CODICE_CAT',      # Macro Categoria (es. BIANCHERIA CASA)
+        4: 'CODICE_CAT',      # Macro Categoria
         5: 'CODICE_FOR',      # Fornitore
         6: 'CODICE_MAR',      # Marca
         22: 'PRZ_ACQ',        # Prezzo Acquisto
         32: 'GRUPPO',          # Sotto Categoria / Articolo
         33: 'SOTTOGRUPPO',      # Genere / Misura / Taglia
-        36: 'CAT_LEVEL_4',    # Materiale / Tessuto (es. Cotone, Coral)
-        37: 'CAT_LEVEL_5'     # Sede Magazzino (es. FAMILY, TESSIL)
+        36: 'CAT_LEVEL_4',    # Materiale / Tessuto (Cat. 4)
+        37: 'CAT_LEVEL_5'     # Sede Magazzino (Cat. 5)
     }
     
     df = df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns})
     
-    # Pulizia stringhe
     text_cols = ['DESCRIZION', 'CODICE_CAT', 'CODICE_FOR', 'CODICE_MAR', 'GRUPPO', 'SOTTOGRUPPO', 'CAT_LEVEL_4', 'CAT_LEVEL_5']
     for col in text_cols:
         if col in df.columns:
@@ -94,7 +90,6 @@ def load_giacenze():
         dtype=str
     )
     
-    # Mappatura sequenziale: CODICE_ART + C_01, S_01 ... C_10, S_10
     columns_names = ['CODICE_ART']
     for i in range(1, 11):
         num = f"{i:02d}"
@@ -102,7 +97,6 @@ def load_giacenze():
         
     df.columns = columns_names[:len(df.columns)]
     
-    # Conversione colonne di giacenza e scorta in interi
     num_cols = [c for c in df.columns if c != 'CODICE_ART']
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
@@ -117,7 +111,6 @@ def load_storico_vendite(anni_selezionati):
         if os.path.exists(path):
             try:
                 df = pd.read_csv(path, sep='\t', header=None, encoding='latin1', on_bad_lines='skip', dtype=str)
-                # Selezione colonne rilevanti: 0:Tipo, 1:Data, 4:CODICE_ART, 5:Cod_Fil, 6:Prezzo, 9:Quantita
                 df = df[[0, 1, 4, 5, 6, 9]].copy()
                 df.columns = ['Tipo_Movimento', 'Data', 'CODICE_ART', 'Cod_Filiale_Stor', 'Prezzo', 'Quantita']
                 df['Anno'] = str(anno)
@@ -133,65 +126,54 @@ def load_storico_vendite(anni_selezionati):
     full_df['Prezzo'] = pd.to_numeric(full_df['Prezzo'].str.replace(',', '.'), errors='coerce').fillna(0.0)
     full_df['Data'] = pd.to_datetime(full_df['Data'], format='%d/%m/%Y', errors='coerce')
     
-    # Mappatura inversa codici filiale da STOR_CAR
     reverse_map = {v['cod_stor']: key for key, v in FILIALI_MAP.items()}
     full_df['Cod_Filiale_Key'] = full_df['Cod_Filiale_Stor'].str.zfill(2).map(reverse_map)
     
     return full_df
 
 # ---------------------------------------------------------
-# APPLICAZIONE E INTERFACCIA UTENTE
+# INTERFACCIA E LOGICA APPLICAZIONE
 # ---------------------------------------------------------
 
 st.title("🛍️ Bianco Market - Assistant & Inventory AI")
-st.markdown("Sistema centrale di controllo esistenze, analisi storico vendite e riassortimento automatico.")
+st.markdown("Sistema integrato per la gestione esistenze, analisi vendite e riassortimento automatizzato.")
 
 df_art = load_articoli()
 df_giac = load_giacenze()
 
 if df_art.empty or df_giac.empty:
-    st.error("⚠️ File di dati non trovati. Assicurati che `data/current/ARTICOLI.TXT` e `data/current/Sit_filiali.TXT` siano caricati correttamente.")
+    st.error("⚠️ File dati non trovati. Verifica che `data/current/ARTICOLI.TXT` e `data/current/Sit_filiali.TXT` siano presenti nel repository.")
     st.stop()
 
-# Merge Master Articoli + Giacenze
+# Join Master
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
-# ---------------------------------------------------------
-# SIDEBAR - FILTRI AVANZATI SULL'ANAGRAFICA
-# ---------------------------------------------------------
+# SIDEBAR: FILTRI
 st.sidebar.header("🔍 Filtri Avanzati Catalogo")
 
-# 1. Categoria 5 (Sede Magazzino)
 sedi = sorted([s for s in df_master['CAT_LEVEL_5'].unique() if s])
 sel_sede = st.sidebar.multiselect("Sede Magazzino (Cat. 5)", sedi)
 
-# 2. Macro Categoria (CODICE_CAT)
 macro = sorted([m for m in df_master['CODICE_CAT'].unique() if m])
 sel_macro = st.sidebar.multiselect("Macro Categoria (Codice Cat)", macro)
 
-# 3. Sotto Categoria (GRUPPO)
 gruppi = sorted([g for g in df_master['GRUPPO'].unique() if g])
 sel_gruppo = st.sidebar.multiselect("Sotto Categoria (Gruppo)", gruppi)
 
-# 4. Genere / Taglia / Misura (SOTTOGRUPPO)
 sottogruppi = sorted([sg for sg in df_master['SOTTOGRUPPO'].unique() if sg])
 sel_sottogruppo = st.sidebar.multiselect("Genere / Taglia (Sottogruppo)", sottogruppi)
 
-# 5. Materiale / Tessuto (CAT_LEVEL_4)
 cat4 = sorted([c for c in df_master['CAT_LEVEL_4'].unique() if c])
 sel_cat4 = st.sidebar.multiselect("Materiale / Tessuto (Cat. 4)", cat4)
 
-# 6. Fornitore e Marca
 fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f])
 sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
 
 marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m])
 sel_marca = st.sidebar.multiselect("Marca", marche)
 
-# Ricerca Testuale
 search_term = st.sidebar.text_input("🔎 Cerca per Descrizione o Codice ART", "")
 
-# Applicazione Filtri
 df_filtered = df_master.copy()
 
 if sel_sede:
@@ -214,9 +196,7 @@ if search_term:
         df_filtered['CODICE_ART'].str.contains(search_term, case=False, na=False)
     ]
 
-# ---------------------------------------------------------
-# TAB PRINCIPALI APPLICAZIONE
-# ---------------------------------------------------------
+# TABS
 tab1, tab2, tab3, tab4 = st.tabs([
     "📦 Esistenze & Giacenze", 
     "📈 Analisi Vendite", 
@@ -224,11 +204,9 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "🖨️ Reportistica & Export"
 ])
 
-# ---------------------------------------------------------
-# TAB 1: ESISTENZE MULTI-FILIALE
-# ---------------------------------------------------------
+# TAB 1: ESISTENZE
 with tab1:
-    st.subheader("Consultazione Giacenze e Scorte per Filiale")
+    st.subheader("Consultazione Giacenze per Filiale")
     
     filiali_scelte = st.multiselect(
         "Seleziona le Filiali da visualizzare:",
@@ -239,8 +217,6 @@ with tab1:
     
     if filiali_scelte:
         c_cols = [FILIALI_MAP[f]['col_c'] for f in filiali_scelte]
-        s_cols = [FILIALI_MAP[f]['col_s'] for f in filiali_scelte]
-        
         df_filtered['Totale_Giacenza_Selezionata'] = df_filtered[c_cols].sum(axis=1)
         
         kpi1, kpi2, kpi3 = st.columns(3)
@@ -248,11 +224,9 @@ with tab1:
         kpi2.metric("Pezzi Totali in Giacenza", f"{df_filtered['Totale_Giacenza_Selezionata'].sum():,}")
         kpi3.metric("Filiali Incluse", len(filiali_scelte))
         
-        # Tabella di Visualizzazione
         cols_to_show = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CODICE_CAT', 'GRUPPO', 'SOTTOGRUPPO', 'CAT_LEVEL_4', 'CAT_LEVEL_5'] + c_cols + ['Totale_Giacenza_Selezionata']
         st.dataframe(df_filtered[cols_to_show], use_container_width=True, height=400)
         
-        # Grafico Ripartizione
         st.subheader("📊 Ripartizione Giacenze per Punto Vendita")
         giac_totali = {FILIALI_MAP[f]['nome']: df_filtered[FILIALI_MAP[f]['col_c']].sum() for f in filiali_scelte}
         
@@ -265,25 +239,21 @@ with tab1:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# ---------------------------------------------------------
-# TAB 2: ANALISI STORICO VENDITE
-# ---------------------------------------------------------
+# TAB 2: VENDITE
 with tab2:
-    st.subheader("Analisi delle Vendite da Storico")
+    st.subheader("Analisi Storico Vendite")
     
     col_a, col_b = st.columns(2)
     with col_a:
         anni_disponibili = ['2024', '2025', '2026', '2027']
         anni_sel = st.multiselect("Anni Storico da Analizzare:", anni_disponibili, default=['2026'])
     with col_b:
-        tipi_mov = st.multiselect("Tipi Movimento:", ['S', 'F'], default=['S', 'F'], help="S = Scontrino / Vendita, F = Fattura")
+        tipi_mov = st.multiselect("Tipi Movimento:", ['S', 'F'], default=['S', 'F'])
         
     if anni_sel:
         df_stor = load_storico_vendite(anni_sel)
         if not df_stor.empty:
             df_stor = df_stor[df_stor['Tipo_Movimento'].isin(tipi_mov)]
-            
-            # Filtro per prodotti correntemente selezionati nei filtri
             art_validi = set(df_filtered['CODICE_ART'])
             df_stor_filt = df_stor[df_stor['CODICE_ART'].isin(art_validi)]
             
@@ -309,12 +279,9 @@ with tab2:
         else:
             st.info("Nessun dato storico trovato nelle cartelle selezionate.")
 
-# ---------------------------------------------------------
-# TAB 3: CALCOLO ALGORITMICO RIASSORTIMENTO
-# ---------------------------------------------------------
+# TAB 3: RIASSORTIMENTO
 with tab3:
     st.subheader("💡 Consigli Automatici di Riassortimento")
-    st.markdown("Confronta la giacenza reale con la scorta minima di sicurezza inserita a sistema (`S_XX`) e il consumo stimato per suggerire l'ordine ottimale.")
     
     col_r1, col_r2 = st.columns(2)
     with col_r1:
@@ -342,9 +309,7 @@ with tab3:
     cols_ordine = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'GRUPPO', 'SOTTOGRUPPO', 'Giacenza_Attuale', 'Scorta_Minima_Base', 'Proposta_Ordine']
     st.dataframe(df_da_ordinare[cols_ordine], use_container_width=True)
 
-# ---------------------------------------------------------
-# TAB 4: REPORTISTICA E STAMPA / EXPORT
-# ---------------------------------------------------------
+# TAB 4: REPORTISTICA
 with tab4:
     st.subheader("🖨️ Generazione e Download Report")
     
