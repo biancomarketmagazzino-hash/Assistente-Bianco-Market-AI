@@ -1,106 +1,117 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from db_engine import load_data, load_data_from_uploads
-from ai_helper import get_sql_query, explain_results
+import google.generativeai as genai
 
-st.set_page_config(page_title="Bianco Market AI", page_icon="🛍️", layout="wide")
+# ---------------------------------------------------------
+# CONFIGURAZIONE PAGINA
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="Bianco Market - AI Assistant",
+    page_icon="📦",
+    layout="wide"
+)
 
-st.title("🛍️ Bianco Market - Assistente Gestionale AI")
-st.caption("Interroga giacenze, vendite, trasferimenti e pianifica il riassortimento in tempo reale.")
+st.title("📦 Assistant Bianco Market")
+st.caption("Gestionale Intelligente per Giacenze, Vendite e Riassortimenti")
 
-# Recupera la chiave API
-api_key = st.sidebar.text_input("Groq API Key (Gratuita)", type="password")
+# ---------------------------------------------------------
+# CARICAMENTO DATI
+# ---------------------------------------------------------
+@st.cache_data
+def load_data():
+    try:
+        return pd.read_csv("dati_inventario.csv")
+    except FileNotFoundError:
+        # Dati demo se il file non è presente
+        return pd.DataFrame({
+            "Filiale": ["Ragusa", "Modica"],
+            "Fornitore": ["Caleffi", "Cotonella"],
+            "Marca": ["Caleffi", "Cotonella"],
+            "Categoria": ["Tessile Casa", "Intimo"],
+            "Tipo_Articolo": ["Lenzuolo Matrimoniale", "Pigiama Uomo C/cot"],
+            "Taglia": ["Unica", "L"],
+            "Esistenza": [12, 2],
+            "Venduto_30gg": [10, 15],
+            "Scorta_Minima": [5, 5]
+        })
+
+df = load_data()
+
+# ---------------------------------------------------------
+# CONFIGURAZIONE API GEMINI (Libreria Stabile)
+# ---------------------------------------------------------
+api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else st.sidebar.text_input("Inserisci Gemini API Key:", type="password")
+
 if not api_key:
-    if "GROQ_API_KEY" in st.secrets:
-        api_key = st.secrets["GROQ_API_KEY"]
-    else:
-        st.info("💡 Inserisci la tua API Key gratuita di Groq nella barra laterale per procedere.")
-        st.stop()
+    st.warning("Inserisci la chiave API Gemini per attivare l'assistente.")
+    st.stop()
 
-# Connessione al Database
-con = None
+genai.configure(api_key=api_key)
 
-try:
-    con = load_data()
-    st.sidebar.success("✅ Dati caricati dalla repository")
-except Exception:
-    st.sidebar.warning("⚠️ File locali non trovati. Caricali manualmente:")
-    up_art = st.sidebar.file_uploader("1. File ARTICOLI (.txt)", type=["txt"])
-    up_sit = st.sidebar.file_uploader("2. File Sit_filiali (.txt)", type=["txt"])
-    up_stor = st.sidebar.file_uploader("3. File STOR_CAR (.txt)", type=["txt"])
-    
-    if up_art and up_sit and up_stor:
-        with st.spinner("Caricamento archivi in corso..."):
-            con = load_data_from_uploads(up_art, up_sit, up_stor)
-            st.sidebar.success("✅ File caricati con successo!")
-    else:
-        st.info("📥 Carica i 3 file dal menu laterale a sinistra per iniziare.")
-        st.stop()
+# ---------------------------------------------------------
+# BARRA LATERALE E FILTRI
+# ---------------------------------------------------------
+st.sidebar.header("🔍 Filtri Magazzino")
+filiale_selected = st.sidebar.multiselect("Filiale:", options=df["Filiale"].unique(), default=df["Filiale"].unique())
+df_filtered = df[df["Filiale"].isin(filiale_selected)]
 
-# Cronologia Chat
+st.sidebar.metric("Totale Giacenza", df_filtered["Esistenza"].sum())
+st.sidebar.metric("Totale Venduto", df_filtered["Venduto_30gg"].sum())
+
+# ---------------------------------------------------------
+# CHATBOT AI (Modello Stabile gemini-1.5-flash)
+# ---------------------------------------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state["messages"] = [
+        {"role": "assistant", "content": "Ciao! Sono pronto. Chiedimi pure giacenze, vendite o consigli di riassortimento per Bianco Market."}
+    ]
 
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
-        if "data" in msg and msg["data"] is not None:
-            st.dataframe(msg["data"])
+    st.chat_message(msg["role"]).write(msg["content"])
 
-# Input Chat
-user_prompt = st.chat_input("Es: Mostrami i 10 prodotti più venduti a Sabella con le giacenze attuali a Magazzino")
+if prompt := st.chat_input("Es: Quanti pezzi abbiamo di Pigiama Uomo C/cot a Modica?"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").write(prompt)
 
-if user_prompt and con is not None:
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
-    with st.chat_message("user"):
-        st.write(user_prompt)
+    # Preparazione del contesto dati per l'IA
+    system_prompt = f"""
+    Sei l'assistente intelligente per l'azienda Bianco Market.
+    Usa ESCLUSIVAMENTE questi dati di inventario per rispondere alle domande:
+    
+    {df_filtered.to_string(index=False)}
+    
+    Rispondi in modo preciso, professionale e sintetico.
+    """
 
-    with st.chat_message("assistant"):
-        with st.spinner("L'AI sta analizzando i dati di Bianco Market..."):
-            try:
-                # 1. Genera SQL
-                sql = get_sql_query(user_prompt, api_key)
-                
-                # 2. Esegui Query
-                df_res = con.execute(sql).fetchdf()
-                
-                # 3. Spiegazione AI
-                risposta = explain_results(user_prompt, df_res, api_key)
-                st.write(risposta)
-                
-                # 4. Tabella e Grafici
-                if not df_res.empty:
-                    st.dataframe(df_res, use_container_width=True)
-                    
-                    num_cols = df_res.select_dtypes(include=['number']).columns
-                    cat_cols = df_res.select_dtypes(include=['object']).columns
-                    
-                    if len(num_cols) >= 1 and len(cat_cols) >= 1:
-                        fig = px.bar(
-                            df_res.head(15), 
-                            x=cat_cols[0], 
-                            y=num_cols[0], 
-                            title=f"Analisi: {cat_cols[0]} vs {num_cols[0]}",
-                            color=num_cols[0], 
-                            color_continuous_scale="Blues"
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Download CSV
-                    csv_data = df_res.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Scarica Report (CSV)",
-                        data=csv_data,
-                        file_name="Report_Bianco_Market.csv",
-                        mime="text/csv"
-                    )
+    try:
+        # Inizializzazione del modello stabile
+        generation_config = {"temperature": 0.2}
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=system_prompt,
+            generation_config=generation_config
+        )
+        
+        response = model.generate_content(prompt)
+        reply = response.text
+        
+    except Exception as e:
+        reply = f"Errore di connessione: {e}. Riprova tra un istante."
 
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": risposta,
-                    "data": df_res if not df_res.empty else None
-                })
-                
-            except Exception as e:
-                st.error(f"Errore durante l'interrogazione: {e}")
+    st.session_state.messages.append({"role": "assistant", "content": reply})
+    st.chat_message("assistant").write(reply)
+
+# ---------------------------------------------------------
+# SEZIONE GRAFICI
+# ---------------------------------------------------------
+st.divider()
+st.subheader("📊 Grafici e Analisi")
+if not df_filtered.empty:
+    col1, col2 = st.columns(2)
+    with col1:
+        fig1 = px.bar(df_filtered, x="Tipo_Articolo", y="Esistenza", color="Filiale", title="Giacenze per Articolo")
+        st.plotly_chart(fig1, use_container_width=True)
+    with col2:
+        fig2 = px.pie(df_filtered, values="Venduto_30gg", names="Categoria", title="Vendite per Categoria")
+        st.plotly_chart(fig2, use_container_width=True)
