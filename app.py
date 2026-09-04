@@ -1,9 +1,6 @@
 import os
-import glob
 import pandas as pd
-import numpy as np
 import streamlit as st
-import plotly.express as px
 
 # ---------------------------------------------------------
 # CONFIGURAZIONE PAGINA STREAMLIT
@@ -14,8 +11,21 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# MAPPATURA UFFICIALE CATEGORIE E FILIALI
+# MAPPATURA UFFICIALE FILIALI E CATEGORIE
 # ---------------------------------------------------------
+MAPPA_FILIALI = {
+    'C_01': 'Magazzino',
+    'C_02': 'Sciacca',
+    'C_03': 'Menfi',
+    'C_04': 'Marsala',
+    'C_05': 'Trapani',
+    'C_06': 'Ragusa',
+    'C_07': 'Sabella',
+    'C_08': 'Mazara',
+    'C_09': 'Casa Market',
+    'C_10': 'Sport Market'
+}
+
 CATEGORIE_L1 = [
     "ACCESSORI", "ARREDO BAGNO", "ARREDO CASA", "ARREDO GIARDINO", "ARTICOLI DA REGALO",
     "BIANCHERIA BAGNO", "BIANCHERIA CASA", "BIANCHERIA INTIMA", "BIANCHERIA LETTO",
@@ -68,19 +78,6 @@ CATEGORIE_L4 = [
     "PVC", "RASO", "SEAMLESS", "SETA", "SPUGNA", "TRAPUNTATO", "TRIACETATO", "VELVET", "VISCOSA"
 ]
 
-FILIALI_MAP = {
-    '01': {'nome': 'Magazzino Centrale', 'col_c': 'C_01', 'col_s': 'S_01', 'cod_stor': '00'},
-    '02': {'nome': 'Sciacca',            'col_c': 'C_02', 'col_s': 'S_02', 'cod_stor': '06'},
-    '03': {'nome': 'Menfi',              'col_c': 'C_03', 'col_s': 'S_03', 'cod_stor': '01'},
-    '04': {'nome': 'Marsala',            'col_c': 'C_04', 'col_s': 'S_04', 'cod_stor': '03'},
-    '05': {'nome': 'Trapani',            'col_c': 'C_05', 'col_s': 'S_05', 'cod_stor': '09'},
-    '06': {'nome': 'Ragusa',             'col_c': 'C_06', 'col_s': 'S_06', 'cod_stor': '07'},
-    '07': {'nome': 'Sabella',            'col_c': 'C_07', 'col_s': 'S_07', 'cod_stor': '05'},
-    '08': {'nome': 'Mazara del Vallo',   'col_c': 'C_08', 'col_s': 'S_08', 'cod_stor': '02'},
-    '09': {'nome': 'Casa Market',        'col_c': 'C_09', 'col_s': 'S_09', 'cod_stor': '04'},
-    '10': {'nome': 'Sport Market',       'col_c': 'C_10', 'col_s': 'S_10', 'cod_stor': '08'}
-}
-
 # ---------------------------------------------------------
 # UTILITY PER RICERCA FILE CSV
 # ---------------------------------------------------------
@@ -96,21 +93,15 @@ def find_file(filename, possible_dirs=None):
     return None
 
 # ---------------------------------------------------------
-# FUNZIONI CARICAMENTO DATI CACHATE (DA FILE CSV)
+# CARICAMENTO DATI CACHATO
 # ---------------------------------------------------------
-
 @st.cache_data(ttl=3600)
 def load_articoli():
     path = find_file("ARTICOLI.csv")
     if not path:
         return pd.DataFrame()
     
-    df = pd.read_csv(
-        path, 
-        encoding='latin1', 
-        on_bad_lines='skip',
-        dtype=str
-    )
+    df = pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
     
     rename_dict = {
         'CODICE_CAT': 'CAT_L1_REPARTO',
@@ -120,14 +111,11 @@ def load_articoli():
     }
     df = df.rename(columns=rename_dict)
     
-    text_cols = ['DESCRIZION', 'CAT_L1_REPARTO', 'CODICE_FOR', 'CODICE_MAR', 'CAT_L2_ARTICOLO', 'CAT_L3_GENERE', 'CAT_L4_TESSUTO']
+    text_cols = ['DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CAT_L1_REPARTO', 'CAT_L2_ARTICOLO', 'CAT_L3_GENERE', 'CAT_L4_TESSUTO']
     for col in text_cols:
         if col in df.columns:
-            df[col] = df[col].fillna('NON DEFINITO').str.strip()
+            df[col] = df[col].fillna('-').str.strip()
             
-    if 'PRZ_ACQ' in df.columns:
-        df['PRZ_ACQ'] = pd.to_numeric(df['PRZ_ACQ'].str.replace(',', '.'), errors='coerce').fillna(0.0)
-        
     return df
 
 @st.cache_data(ttl=3600)
@@ -136,92 +124,46 @@ def load_giacenze():
     if not path:
         return pd.DataFrame()
     
-    df = pd.read_csv(
-        path, 
-        encoding='latin1', 
-        on_bad_lines='skip',
-        dtype=str
-    )
+    df = pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
     
+    # Conversione numerica colonne giacenza
     num_cols = [c for c in df.columns if c != 'CODICE_ART']
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
         
     return df
 
-@st.cache_data(ttl=3600)
-def load_storico_vendite():
-    path = find_file("STOR_CAR.csv")
-    if not path:
-        return pd.DataFrame()
-    
-    try:
-        df = pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
-        
-        col_map = {
-            'TIPO': 'Tipo_Movimento',
-            'DATA': 'Data',
-            'CODICE_ART': 'CODICE_ART',
-            'FILIALE': 'Cod_Filiale_Stor',
-            'PRZ_ACQ': 'Prezzo',
-            'QTA': 'Quantita'
-        }
-        df = df.rename(columns=col_map)
-        
-        if 'Quantita' in df.columns:
-            df['Quantita'] = pd.to_numeric(df['Quantita'].str.replace(',', '.'), errors='coerce').fillna(0)
-        if 'Prezzo' in df.columns:
-            df['Prezzo'] = pd.to_numeric(df['Prezzo'].str.replace(',', '.'), errors='coerce').fillna(0.0)
-        if 'Data' in df.columns:
-            df['Data'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
-            
-        reverse_map = {v['cod_stor']: key for key, v in FILIALI_MAP.items()}
-        if 'Cod_Filiale_Stor' in df.columns:
-            df['Cod_Filiale_Key'] = df['Cod_Filiale_Stor'].str.zfill(2).map(reverse_map)
-            
-        return df
-    except Exception:
-        return pd.DataFrame()
-
 # ---------------------------------------------------------
-# INTERFACCIA E LOGICA PRINCIPALE
+# CARICAMENTO E PREPARAZIONE DATI
 # ---------------------------------------------------------
-
-st.title("🛍️ Bianco Market - Assistant & Inventory AI")
-st.markdown("Sistema integrato per la gestione esistenze, analisi vendite e riassortimento automatizzato.")
+st.title("🛍️ Bianco Market - Gestione Esistenze & Giacenze")
 
 df_art = load_articoli()
 df_giac = load_giacenze()
 
 if df_art.empty or df_giac.empty:
-    st.warning("⚠️ File CSV non trovati. Verifica di aver caricato `ARTICOLI.csv` e `Sit_filiali.csv` nel progetto.")
+    st.warning("⚠️ Impossibile caricare `ARTICOLI.csv` o `Sit_filiali.csv`.")
     st.stop()
 
-# Join Master Data
+# Join dei due dataset
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
 # ---------------------------------------------------------
 # SIDEBAR - FILTRI CATALOGO
 # ---------------------------------------------------------
-st.sidebar.header("🔍 Filtri Avanzati Catalogo")
+st.sidebar.header("🔍 Filtri Catalogo")
 
-# 1. PRIMO FILTRO: Ricerca Avanzata Multiparola
-search_term = st.sidebar.text_input(
-    "🔎 Ricerca per Descrizione o Codice ART", 
-    "", 
-    placeholder="Es: ACCAPP DESID"
-)
+search_term = st.sidebar.text_input("🔎 Ricerca per Descrizione o Codice ART", "", placeholder="Es: STROFINACCI")
 
-# 2. FILTRI CATEGORIA PER LIVELLO (1, 2, 3, 4)
-sel_l1 = st.sidebar.multiselect("Livello 1: Reparto / Macro Cat.", CATEGORIE_L1)
+sel_l1 = st.sidebar.multiselect("Livello 1: Reparto", CATEGORIE_L1)
 sel_l2 = st.sidebar.multiselect("Livello 2: Tipologia Articolo", CATEGORIE_L2)
 sel_l3 = st.sidebar.multiselect("Livello 3: Genere / Misura", CATEGORIE_L3)
 sel_l4 = st.sidebar.multiselect("Livello 4: Materiale / Tessuto", CATEGORIE_L4)
 
-fornitori = sorted([f for f in df_master['CODICE_FOR'].dropna().unique() if f]) if 'CODICE_FOR' in df_master.columns else []
+fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f != '-']) if 'CODICE_FOR' in df_master.columns else []
 sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
 
-marche = sorted([m for m in df_master['CODICE_MAR'].dropna().unique() if m]) if 'CODICE_MAR' in df_master.columns else []
+marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m != '-']) if 'CODICE_MAR' in df_master.columns else []
 sel_marca = st.sidebar.multiselect("Marca", marche)
 
 # APPLICAZIONE FILTRI
@@ -249,150 +191,56 @@ if sel_marca and 'CODICE_MAR' in df_filtered.columns:
     df_filtered = df_filtered[df_filtered['CODICE_MAR'].isin(sel_marca)]
 
 # ---------------------------------------------------------
-# TABS SCHERMATE PRINCIPALI
+# SELEZIONE FILIALI DA MOSTRARE
 # ---------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📦 Esistenze & Giacenze", 
-    "📈 Analisi Vendite", 
-    "💡 Algoritmo Riassortimento", 
-    "🖨️ Reportistica & Export"
-])
+filiali_scelte_keys = st.multiselect(
+    "Seleziona le Filiali da includere in tabella:",
+    options=list(MAPPA_FILIALI.keys()),
+    format_func=lambda x: MAPPA_FILIALI[x],
+    default=list(MAPPA_FILIALI.keys())
+)
 
-# TAB 1: ESISTENZE
-with tab1:
-    st.subheader("Consultazione Giacenze per Filiale")
-    
-    filiali_scelte = st.multiselect(
-        "Seleziona le Filiali da visualizzare:",
-        options=list(FILIALI_MAP.keys()),
-        format_func=lambda x: f"{x} - {FILIALI_MAP[x]['nome']}",
-        default=list(FILIALI_MAP.keys())
-    )
-    
-    if filiali_scelte:
-        c_cols = [FILIALI_MAP[f]['col_c'] for f in filiali_scelte if FILIALI_MAP[f]['col_c'] in df_filtered.columns]
-        df_filtered['Totale_Giacenza_Selezionata'] = df_filtered[c_cols].sum(axis=1) if c_cols else 0
-        
-        kpi1, kpi2, kpi3 = st.columns(3)
-        kpi1.metric("Articoli Filtrati", f"{len(df_filtered):,}")
-        kpi2.metric("Pezzi Totali in Giacenza", f"{df_filtered['Totale_Giacenza_Selezionata'].sum():,}")
-        kpi3.metric("Filiali Incluse", len(filiali_scelte))
-        
-        cols_base = ['CODICE_ART', 'DESCRIZION', 'CAT_L1_REPARTO', 'CAT_L2_ARTICOLO', 'CAT_L3_GENERE', 'CAT_L4_TESSUTO', 'CODICE_FOR', 'CODICE_MAR']
-        cols_presenti = [c for c in cols_base if c in df_filtered.columns]
-        cols_to_show = cols_presenti + c_cols + ['Totale_Giacenza_Selezionata']
-        
-        st.dataframe(df_filtered[cols_to_show], use_container_width=True, height=400)
-        
-        st.subheader("📊 Ripartizione Giacenze per Punto Vendita")
-        giac_totali = {
-            FILIALI_MAP[f]['nome']: df_filtered[FILIALI_MAP[f]['col_c']].sum() 
-            for f in filiali_scelte if FILIALI_MAP[f]['col_c'] in df_filtered.columns
-        }
-        
-        if giac_totali:
-            fig = px.bar(
-                x=list(giac_totali.keys()), 
-                y=list(giac_totali.values()),
-                labels={'x': 'Punto Vendita', 'y': 'Giacenza (Pezzi)'},
-                title="Distribuzione Pezzi tra le Filiali",
-                color_discrete_sequence=['#0056b3']
-            )
-            st.plotly_chart(fig, use_container_width=True)
+if not filiali_scelte_keys:
+    st.info("Seleziona almeno una filiale per visualizzare i dati.")
+    st.stop()
 
-# TAB 2: VENDITE
-with tab2:
-    st.subheader("Analisi Storico Movimenti")
-    
-    tipi_mov = st.multiselect("Tipi Movimento:", ['S', 'F', 'C', 'T'], default=['S', 'F'])
-    
-    df_stor = load_storico_vendite()
-    if not df_stor.empty:
-        if 'Tipo_Movimento' in df_stor.columns:
-            df_stor = df_stor[df_stor['Tipo_Movimento'].isin(tipi_mov)]
-        
-        art_validi = set(df_filtered['CODICE_ART'])
-        df_stor_filt = df_stor[df_stor['CODICE_ART'].isin(art_validi)]
-        
-        st.markdown("---")
-        k1, k2, k3 = st.columns(3)
-        tot_pezzi = df_stor_filt['Quantita'].sum() if 'Quantita' in df_stor_filt.columns else 0
-        tot_valore = (df_stor_filt['Quantita'] * df_stor_filt['Prezzo']).sum() if ('Quantita' in df_stor_filt.columns and 'Prezzo' in df_stor_filt.columns) else 0
-        
-        k1.metric("Pezzi Movimentati", f"{int(tot_pezzi):,}")
-        k2.metric("Valore Stimato", f"€ {tot_valore:,.2f}")
-        k3.metric("Numero Movimenti", f"{len(df_stor_filt):,}")
-        
-        if not df_stor_filt.empty and 'Data' in df_stor_filt.columns:
-            df_trend = df_stor_filt.dropna(subset=['Data']).set_index('Data').groupby(pd.Grouper(freq='M'))['Quantita'].sum().reset_index()
-            fig_trend = px.line(
-                df_trend, 
-                x='Data', 
-                y='Quantita', 
-                title="Andamento Mensile Movimenti (Pezzi)",
-                markers=True
-            )
-            st.plotly_chart(fig_trend, use_container_width=True)
-    else:
-        st.info("Nessun dato trovato nel file STOR_CAR.csv.")
+# Calcolo totale quantità selezionata
+df_filtered['Quantità Totale Selezionata'] = df_filtered[filiali_scelte_keys].sum(axis=1)
 
-# TAB 3: RIASSORTIMENTO
-with tab3:
-    st.subheader("💡 Consigli Automatici di Riassortimento")
-    
-    col_r1, col_r2 = st.columns(2)
-    with col_r1:
-        filiale_target = st.selectbox(
-            "Seleziona la Filiale per cui generare il riassortimento:",
-            options=list(FILIALI_MAP.keys()),
-            format_func=lambda x: f"{x} - {FILIALI_MAP[x]['nome']}"
-        )
-    with col_r2:
-        percentuale_scorta = st.slider("Incremento Scorta di Sicurezza (%)", 0, 50, 10)
-        
-    col_c = FILIALI_MAP[filiale_target]['col_c']
-    col_s = FILIALI_MAP[filiale_target]['col_s']
-    
-    df_reorder = df_filtered.copy()
-    if col_c in df_reorder.columns and col_s in df_reorder.columns:
-        df_reorder['Giacenza_Attuale'] = df_reorder[col_c]
-        df_reorder['Scorta_Minima_Base'] = df_reorder[col_s]
-        df_reorder['Scorta_Calcolata'] = (df_reorder['Scorta_Minima_Base'] * (1 + percentuale_scorta/100)).astype(int)
-        df_reorder['Proposta_Ordine'] = (df_reorder['Scorta_Calcolata'] - df_reorder['Giacenza_Attuale']).clip(lower=0)
-        
-        df_da_ordinare = df_reorder[df_reorder['Proposta_Ordine'] > 0]
-        
-        st.warning(f"⚠️ Trovati **{len(df_da_ordinare)}** articoli da riassortire per **{FILIALI_MAP[filiale_target]['nome']}**")
-        
-        cols_ordine_base = ['CODICE_ART', 'DESCRIZION', 'CAT_L1_REPARTO', 'CAT_L2_ARTICOLO', 'CODICE_FOR', 'CODICE_MAR', 'Giacenza_Attuale', 'Scorta_Minima_Base', 'Proposta_Ordine']
-        cols_ordine = [c for c in cols_ordine_base if c in df_da_ordinare.columns]
-        st.dataframe(df_da_ordinare[cols_ordine], use_container_width=True)
+# Preparazione colonne della tabella
+# Struttura richiesta: CODICE_ART, DESCRIZION, CODICE_FOR, CODICE_MAR + Filiali Selezionate + Totale
+colonne_mappate = {k: MAPPA_FILIALI[k] for k in filiali_scelte_keys}
 
-# TAB 4: REPORTISTICA
-with tab4:
-    st.subheader("🖨️ Generazione e Download Report")
-    
-    scelta_report = st.radio("Scegli il tipo di file da esportare:", [
-        "Report Giacenze Completo (Articoli Filtrati)", 
-        "Piano Ordine Riassortimento Fornitore"
-    ])
-    
-    if scelta_report == "Report Giacenze Completo (Articoli Filtrati)":
-        csv_full = df_filtered.to_csv(index=False).encode('latin1')
-        st.download_button(
-            label="📥 Scarica Report Giacenze in CSV",
-            data=csv_full,
-            file_name="Bianco_Market_Giacenze.csv",
-            mime="text/csv"
-        )
-    else:
-        if 'df_da_ordinare' in locals() and not df_da_ordinare.empty:
-            csv_ord = df_da_ordinare[cols_ordine].to_csv(index=False).encode('latin1')
-            st.download_button(
-                label="📥 Scarica Ordine Suggerito in CSV",
-                data=csv_ord,
-                file_name=f"Ordine_Riassortimento_{FILIALI_MAP[filiale_target]['nome']}.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("Nessun ordine suggerito presente da esportare per la filiale selezionata.")
+df_display = df_filtered[[
+    'CODICE_ART', 
+    'DESCRIZION', 
+    'CODICE_FOR', 
+    'CODICE_MAR'
+] + filiali_scelte_keys + ['Quantità Totale Selezionata']].copy()
+
+# Ridenominazione colonne
+df_display = df_display.rename(columns={
+    'CODICE_ART': 'Codice Articolo',
+    'DESCRIZION': 'Descrizione',
+    'CODICE_FOR': 'Fornitore',
+    'CODICE_MAR': 'Marca',
+    **colonne_mappate
+})
+
+# ---------------------------------------------------------
+# METRICHE E TABELLA
+# ---------------------------------------------------------
+k1, k2 = st.columns(2)
+k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
+k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
+
+st.dataframe(df_display, use_container_width=True, height=500)
+
+# Export CSV della vista corrente
+csv_data = df_display.to_csv(index=False).encode('latin1')
+st.download_button(
+    label="📥 Scarica Tabella in CSV",
+    data=csv_data,
+    file_name="Giacenze_Filiali_Bianco_Market.csv",
+    mime="text/csv"
+)
