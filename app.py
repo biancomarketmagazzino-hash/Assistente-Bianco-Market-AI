@@ -230,6 +230,9 @@ with tab_giacenze:
     else:
         df_filtered['Quantità Totale Selezionata'] = df_filtered[filiali_scelte_keys].sum(axis=1)
 
+        # FITRO RICHIESTO: Mostra solo le righe in cui c'è quantità (> 0) nelle filiali selezionate
+        df_filtered = df_filtered[df_filtered['Quantità Totale Selezionata'] > 0]
+
         colonne_mappate = {k: MAPPA_FILIALI[k] for k in filiali_scelte_keys}
         nomi_filiali_selezionate = list(colonne_mappate.values())
 
@@ -250,29 +253,38 @@ with tab_giacenze:
 
         df_display_table = df_display.set_index('Codice Articolo')
 
+        # Funzione helper per calcolare colore RGBA in base al valore relativo
+        def get_cell_color_styles(val, v_max):
+            if not isinstance(val, (int, float)) or val <= 0 or pd.isna(val):
+                return "", ""
+            
+            ratio = 0.15 + 0.70 * (val / v_max)
+            r = int(225 - (185 * ratio))
+            g = int(238 - (150 * ratio))
+            b = int(250 - (70 * ratio))
+            text_color = "white" if ratio > 0.55 else "black"
+            return f"rgb({r}, {g}, {b})", text_color
+
         def applica_colori_giacenza(df, colonne_numeric):
             v_max = df[colonne_numeric].max().max() if not df.empty else 1
             if pd.isna(v_max) or v_max <= 0:
                 v_max = 1
 
             def colora_cella(val):
-                if not isinstance(val, (int, float)) or val <= 0:
+                bg_color, text_color = get_cell_color_styles(val, v_max)
+                if not bg_color:
                     return ''
-                
-                ratio = 0.15 + 0.70 * (val / v_max)
-                r = int(225 - (185 * ratio))
-                g = int(238 - (150 * ratio))
-                b = int(250 - (70 * ratio))
-                text_color = "white" if ratio > 0.55 else "black"
-                return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
+                return f'background-color: {bg_color}; color: {text_color}; font-weight: bold;'
 
             return df.style.map(colora_cella, subset=colonne_numeric)
 
         if not ha_filtri_attivi:
             st.info("👈 **Seleziona un filtro o digita un termine di ricerca nel menu a sinistra per visualizzare la tabella dei prodotti.**")
+        elif df_display.empty:
+            st.warning("⚠️ Nessun articolo trovato con giacenza maggiore di 0 per i filtri selezionati.")
         else:
             k1, k2 = st.columns(2)
-            k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
+            k1.metric("Totale Articoli Trovati (Giacenza > 0)", f"{len(df_display):,}")
             k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
             colonne_da_colorare = nomi_filiali_selezionate
@@ -312,7 +324,31 @@ with tab_giacenze:
                     )
 
             with c3:
-                clean_html_table = df_display.to_html(index=False)
+                # Generazione HTML personalizzato per la stampa, inclusivo dei colori sulle celle delle filiali
+                v_max_print = df_display[nomi_filiali_selezionate].max().max() if not df_display.empty else 1
+                if pd.isna(v_max_print) or v_max_print <= 0:
+                    v_max_print = 1
+
+                headers_html = "".join([f"<th>{col}</th>" for col in df_display.columns])
+                rows_html = []
+                
+                for _, row in df_display.iterrows():
+                    row_cells = []
+                    for col in df_display.columns:
+                        val = row[col]
+                        if col in nomi_filiali_selezionate:
+                            bg_c, txt_c = get_cell_color_styles(val, v_max_print)
+                            if bg_c:
+                                cell_style = f"background-color: {bg_c}; color: {txt_c}; font-weight: bold;"
+                            else:
+                                cell_style = ""
+                            row_cells.append(f'<td style="{cell_style}">{val}</td>')
+                        else:
+                            row_cells.append(f'<td>{val}</td>')
+                    rows_html.append(f"<tr>{''.join(row_cells)}</tr>")
+                
+                clean_html_table = f"<table><thead><tr>{headers_html}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
+
                 print_script = f"""
                 <style>
                     .print-btn {{
@@ -332,7 +368,7 @@ with tab_giacenze:
                     }}
                 </style>
 
-                <button class="print-btn" onclick="openPrintWindow()">🖨️ Stampa Tabella Completa</button>
+                <button class="print-btn" onclick="openPrintWindow()">🖨️ Stampa Tabella Colorata</button>
 
                 <script>
                     function openPrintWindow() {{
@@ -369,8 +405,12 @@ with tab_giacenze:
                                         background-color: #f2f2f2;
                                         font-weight: bold;
                                     }}
-                                    tr:nth-child(even) {{
-                                        background-color: #fafafa;
+                                    /* Abilita la stampa dei colori di sfondo del browser */
+                                    @media print {{
+                                        body {{
+                                            -webkit-print-color-adjust: exact;
+                                            print-color-adjust: exact;
+                                        }}
                                     }}
                                     @page {{
                                         size: A4 landscape;
