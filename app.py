@@ -93,7 +93,6 @@ def parse_date_it(series):
 def parse_numeric_quantity(series):
     """Pulisce e converte correttamente i numeri gestendo virgole e punti italiani"""
     s_clean = series.astype(str).str.strip().str.replace(',', '.', regex=False)
-    # Se ci sono valori tipo 1.00 converte in float e poi int
     return pd.to_numeric(s_clean, errors='coerce').fillna(0).round().astype(int)
 
 def find_file(filename, base_dir="data"):
@@ -113,8 +112,6 @@ def find_2026_storici_files(base_dir="data"):
     for d in search_dirs:
         if os.path.exists(d):
             for root, dirs, files in os.walk(d):
-                if "2025" in root or "2024" in root:
-                    continue
                 for f in files:
                     f_upper = f.upper()
                     if ("STOR_CAR" in f_upper or "VENDITE" in f_upper or "VENDUTO" in f_upper) and f_upper.endswith(".CSV"):
@@ -128,7 +125,7 @@ def safe_read_csv(path):
         return pd.DataFrame()
 
     for encoding in ['latin1', 'utf-8-sig', 'utf-8', 'cp1252']:
-        for sep in [';', ',', '\t', '|']:
+        for sep in [',', ';', '\t', '|']:
             try:
                 df = pd.read_csv(path, encoding=encoding, sep=sep, on_bad_lines='skip', dtype=str)
                 if len(df.columns) > 1:
@@ -194,16 +191,11 @@ def load_stor_car_multianno():
         if df_temp.empty:
             continue
 
-        cols_upper = {c: str(c).upper().strip() for c in df_temp.columns}
+        cols_upper = {c: str(c).upper().strip().replace('"', '') for c in df_temp.columns}
         df_temp = df_temp.rename(columns=cols_upper)
 
         col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART'] if c in df_temp.columns), None)
-        
-        # Mappatura rigorosa per evitare di scambiare la Quantità con Importi o Prezzi
-        col_qta = next((c for c in ['QUANTITA', 'QTA', 'PZ_VENDUTI', 'PEZZI'] if c in df_temp.columns), None)
-        if not col_qta:
-            col_qta = next((c for c in ['VENDUTO', 'QT_CAR'] if c in df_temp.columns and "IMP" not in c and "PREZZO" not in c), None)
-
+        col_qta = next((c for c in ['QT_CAR', 'QUANTITA', 'QTA', 'PZ_VENDUTI', 'PEZZI', 'VENDUTO'] if c in df_temp.columns and "IMP" not in c and "PREZZO" not in c), None)
         col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_temp.columns), None)
         col_pv = next((c for c in ['CODICE_PV', 'PV', 'PUNTO_VENDITA', 'FILIALE', 'COD_FILIALE'] if c in df_temp.columns), None)
 
@@ -220,8 +212,6 @@ def load_stor_car_multianno():
             df_temp['CODICE_PV'] = 'TUTTI'
 
         df_temp = df_temp.dropna(subset=['DATA_PARSED'])
-        
-        # Mantiene traccia della fonte per la diagnostica
         df_temp['FILE_ORIGINE'] = os.path.basename(path)
 
         dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED', 'CODICE_PV', 'FILE_ORIGINE']])
@@ -345,7 +335,7 @@ with tab_ordini:
         
         c1, c2, c3 = st.columns([1.5, 1.5, 1])
         with c1:
-            data_inizio = st.date_input("Data Inizio:", datetime.date(2026, 6, 10), format="DD/MM/YYYY")
+            data_inizio = st.date_input("Data Inizio:", datetime.date(2026, 6, 1), format="DD/MM/YYYY")
         with c2:
             data_fine = st.date_input("Data Fine:", datetime.date(2026, 9, 4), format="DD/MM/YYYY")
         with c3:
@@ -358,7 +348,7 @@ with tab_ordini:
         with p2:
             moltiplicatore_reintegro = st.number_input("Coefficiente Reintegro sul Venduto:", min_value=0.0, value=1.0, step=0.1)
 
-        o_search = st.text_input("🔎 Ricerca mirata (es. Codice 8000842782685 o Descrizione):", "", key="o_search")
+        o_search = st.text_input("🔎 Ricerca mirata (es. Codice 83909924 o Descrizione):", "", key="o_search")
         btn_calcola = st.form_submit_button("🔥 CALCOLA VENDUTO E REINTEGRO", width="stretch")
 
     df_ord_base = applica_filtri_catalogo(df_master, o_search, sel_l1, sel_l2, sel_l3, sel_l4, sel_fornitore, sel_marca)
@@ -435,7 +425,7 @@ with tab_ordini:
 with tab_dettaglio_pv:
     st.header("🏬 Analisi Dettagliata per Punto Vendita")
 
-    art_ricercato = st.text_input("Inserisci il Codice Articolo (es. 8000842782685):", "8000842782685")
+    art_ricercato = st.text_input("Inserisci il Codice Articolo (es. 83909924):", "83909924")
 
     if art_ricercato.strip():
         cod_clean = art_ricercato.strip().upper()
