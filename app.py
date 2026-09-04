@@ -11,70 +11,6 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# CSS PERSONALIZZATO PER TABELLA HTML E STAMPA INTEGRALE
-# ---------------------------------------------------------
-st.markdown("""
-    <style>
-    /* Stile Tabella HTML in schermata standard */
-    .dataframe-container {
-        max-height: 550px;
-        overflow-y: auto;
-        border: 1px solid #e6e6e6;
-        border-radius: 8px;
-        margin-bottom: 15px;
-    }
-    table.custom-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: sans-serif;
-        font-size: 14px;
-    }
-    table.custom-table th {
-        position: sticky;
-        top: 0;
-        background-color: #f8f9fa;
-        color: #333;
-        padding: 10px;
-        text-align: left;
-        border-bottom: 2px solid #dee2e6;
-        z-index: 1;
-    }
-    table.custom-table td {
-        padding: 8px 10px;
-        border-bottom: 1px solid #e9ecef;
-    }
-
-    /* Stile specifico per la STAMPA INTEGRALE */
-    @media print {
-        section[data-testid="stSidebar"], 
-        .stButton, 
-        .stDownloadButton, 
-        iframe,
-        footer, 
-        header {
-            display: none !important;
-        }
-        
-        .main .block-container {
-            padding: 0 !important;
-            margin: 0 !important;
-            max-width: 100% !important;
-        }
-
-        .dataframe-container {
-            max-height: none !important;
-            overflow: visible !important;
-            border: none !important;
-        }
-
-        tr {
-            page-break-inside: avoid !important;
-        }
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# ---------------------------------------------------------
 # MAPPATURA UFFICIALE FILIALI E CATEGORIE
 # ---------------------------------------------------------
 MAPPA_FILIALI = {
@@ -288,10 +224,19 @@ df_display = df_display.rename(columns={
     **colonne_mappate
 })
 
+# Impostiamo 'Codice Articolo' come indice per rimuovere i numeri di riga (0, 1, 2...)
+df_display_table = df_display.set_index('Codice Articolo')
+
 # ---------------------------------------------------------
-# FUNZIONE GENERAZIONE HTML FORMATTATO (COLORI + SENZA INDICE)
+# FUNZIONE STYLING / COLORAZIONE CONDIZIONALE
 # ---------------------------------------------------------
-def genera_html_tabella(df, colonne_numeric):
+def applica_colori_giacenza(df, colonne_numeric):
+    """
+    Applica una gradazione di colore blu alle quantità positive:
+    - Valori alti: Blu scuro con testo bianco.
+    - Valori bassi: Azzurro chiaro con testo nero.
+    - Valori <= 0: Sfondo trasparente/standard.
+    """
     v_max = df[colonne_numeric].max().max() if not df.empty else 1
     if pd.isna(v_max) or v_max <= 0:
         v_max = 1
@@ -301,56 +246,37 @@ def genera_html_tabella(df, colonne_numeric):
             return ''
         
         ratio = 0.15 + 0.70 * (val / v_max)
+        
         r = int(225 - (185 * ratio))
         g = int(238 - (150 * ratio))
         b = int(250 - (70 * ratio))
+        
         text_color = "white" if ratio > 0.55 else "black"
         
         return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
 
-    styler = df.style.map(colora_cella, subset=colonne_numeric)
-    # Rendering HTML diretto senza passare per l'incompatibilità di st.dataframe
-    return styler.to_html(index=False, table_attributes='class="custom-table"')
+    return df.style.map(colora_cella, subset=colonne_numeric)
 
 # ---------------------------------------------------------
-# METRICHE E VISUALIZZAZIONE TABELLA
+# METRICHE E TABELLA FORMATTATA
 # ---------------------------------------------------------
 k1, k2 = st.columns(2)
 k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
 k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
-html_table = genera_html_tabella(df_display, nomi_filiali_selezionate)
+# Colonne numeriche da colorare (solo le filiali)
+colonne_da_colorare = nomi_filiali_selezionate
 
-# Renderizziamo il blocco HTML dentro un contenitore CSS
-st.markdown(f'<div class="dataframe-container">{html_table}</div>', unsafe_allow_html=True)
+# Applicazione dello stile
+styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
 
-# ---------------------------------------------------------
-# PULSANTI D'AZIONE: DOWNLOAD ED STAMPA
-# ---------------------------------------------------------
-col_btn1, col_btn2 = st.columns([1, 4])
+st.dataframe(styled_df, use_container_width=True, height=550)
 
-with col_btn1:
-    csv_data = df_display.to_csv(index=False).encode('latin1')
-    st.download_button(
-        label="📥 Scarica CSV",
-        data=csv_data,
-        file_name="Giacenze_Filiali_Bianco_Market.csv",
-        mime="text/csv"
-    )
-
-with col_btn2:
-    st.components.v1.html(
-        """
-        <button onclick="window.parent.print()" style="
-            background-color: #0056b3;
-            color: white;
-            border: none;
-            padding: 9px 18px;
-            font-size: 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 500;
-        ">🖨️ Stampa Rapida Tabella</button>
-        """,
-        height=45
-    )
+# Export CSV
+csv_data = df_display.to_csv(index=False).encode('latin1')
+st.download_button(
+    label="📥 Scarica Tabella in CSV",
+    data=csv_data,
+    file_name="Giacenze_Filiali_Bianco_Market.csv",
+    mime="text/csv"
+)
