@@ -172,7 +172,7 @@ if df_art.empty or df_giac.empty:
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
 # ---------------------------------------------------------
-# FUNZIONE PER APLICARE FILTRI
+# FUNZIONE PER APPLICARE FILTRI
 # ---------------------------------------------------------
 def applica_filtri_catalogo(df, search, l1, l2, l3, l4, forn, marca):
     df_f = df.copy()
@@ -203,7 +203,7 @@ def applica_filtri_catalogo(df, search, l1, l2, l3, l4, forn, marca):
 # ---------------------------------------------------------
 tab_giacenze, tab_ordini, tab_statistiche = st.tabs([
     "📦 Giacenze & Catalogo", 
-    "🛒 Gestione Ordini & Fabbisogno", 
+    "🛒 Gestione Ordini & Reintegro Venduto", 
     "📊 Statistiche & Performance"
 ])
 
@@ -367,33 +367,33 @@ with tab_giacenze:
                 components.html(print_script, height=45)
 
 # =========================================================
-# TAB 2: GESTIONE ORDINI & FABBISOGNO
+# TAB 2: GESTIONE ORDINI & REINTEGRO VENDUTO (OPZIONE A)
 # =========================================================
 with tab_ordini:
-    st.header("🛒 Gestione Ordini & Calcolo Fabbisogno")
-    st.write("Visualizza il venduto nel periodo selezionato e calcola automaticamente la quantità da ordinare (Venduto - Esistenza).")
+    st.header("🛒 Gestione Ordini & Reintegro Venduto")
+    st.info("💡 **Logica Applicata (Opzione A - Reintegro Puro)**: La quantità da ordinare equivale al totale dei pezzi venduti nel periodo per ripristinare il livello ottimale di scorta.")
 
     # --- CONTROLLI E DATE IN ALTO ---
     col_d1, col_d2, col_d3 = st.columns([1.5, 1.5, 1])
     with col_d1:
         date_range = st.date_input(
-            "📅 Seleziona Range Date Venduto:",
+            "📅 Seleziona Intervallo Date Venduto:",
             value=(pd.to_datetime("2026-01-01").date(), pd.to_datetime("2026-03-31").date()),
             key="o_date_range"
         )
     with col_d2:
         filiali_ord_keys = st.multiselect(
-            "Filiali di riferimento:",
+            "Filiali di riferimento per la Giacenza:",
             options=list(MAPPA_FILIALI.keys()),
             format_func=lambda x: MAPPA_FILIALI[x],
             default=list(MAPPA_FILIALI.keys()),
             key="o_filiali"
         )
     with col_d3:
-        solo_fabbisogno = st.checkbox("Mostra solo articoli da ordinare (>0)", value=True)
+        solo_venduto = st.checkbox("Mostra solo articoli venduti (>0 pz)", value=True)
 
-    # --- FILTRI CATALOGO DEDICATI PER LA TABELLA ORDINI ---
-    st.subheader("🔍 Filtri Selezione Prodotti")
+    # --- FILTRI CATALOGO COMPLETI PER GLI ORDINI ---
+    st.subheader("🔍 Filtri Selezione Prodotti Catalogo")
     oc1, oc2, oc3, oc4 = st.columns(4)
     with oc1:
         o_search = st.text_input("🔎 Cerca Descrizione / Codice", "", key="o_search")
@@ -404,7 +404,7 @@ with tab_ordini:
     with oc4:
         o_marca = st.multiselect("Marca", marche, key="o_marca")
 
-    with st.expander("Filtri Avanzati (Tipologia L2, Genere L3, Tessuto L4)"):
+    with st.expander("Filtri Avanzati Catalogo (Tipologia L2, Genere L3, Tessuto L4)"):
         ex1, ex2, ex3 = st.columns(3)
         with ex1:
             o_l2 = st.multiselect("Tipologia (L2)", CATEGORIE_L2, key="o_l2")
@@ -413,16 +413,16 @@ with tab_ordini:
         with ex3:
             o_l4 = st.multiselect("Tessuto/Materiale (L4)", CATEGORIE_L4, key="o_l4")
 
-    # Applica filtri
+    # Applica i filtri catalogo
     df_ord_filtered = applica_filtri_catalogo(df_master, o_search, o_l1, o_l2, o_l3, o_l4, o_forn, o_marca)
 
     if not filiali_ord_keys:
-        st.warning("Seleziona almeno una filiale per calcolare la giacenza ed il fabbisogno.")
+        st.warning("Seleziona almeno una filiale per visualizzare la giacenza attuale.")
     else:
-        # Calcola Giacenza Attuale
+        # Giacenza Attuale nelle filiali selezionate
         df_ord_filtered['Giacenza Attuale (Pz)'] = df_ord_filtered[filiali_ord_keys].sum(axis=1)
 
-        # Calcola Venduto (Pz)
+        # Calcolo del Venduto Reale dal file delle vendite
         if not df_vend.empty and 'DATA' in df_vend.columns and len(date_range) == 2:
             d_start, d_end = date_range[0], date_range[1]
             mask_date = (df_vend['DATA'].dt.date >= d_start) & (df_vend['DATA'].dt.date <= d_end)
@@ -430,57 +430,70 @@ with tab_ordini:
             
             if 'CODICE_ART' in df_v_periodo.columns and 'QUANTITA' in df_v_periodo.columns:
                 venduto_per_art = df_v_periodo.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
-                venduto_per_art.columns = ['CODICE_ART', 'Venduto (Pz)']
+                venduto_per_art.columns = ['CODICE_ART', 'Venduto nel Periodo (Pz)']
                 df_ord_filtered = pd.merge(df_ord_filtered, venduto_per_art, on='CODICE_ART', how='left')
-                df_ord_filtered['Venduto (Pz)'] = df_ord_filtered['Venduto (Pz)'].fillna(0).astype(int)
+                df_ord_filtered['Venduto nel Periodo (Pz)'] = df_ord_filtered['Venduto nel Periodo (Pz)'].fillna(0).astype(int)
             else:
-                df_ord_filtered['Venduto (Pz)'] = (df_ord_filtered['Giacenza Attuale (Pz)'] * 0.5).astype(int)
+                df_ord_filtered['Venduto nel Periodo (Pz)'] = 0
         else:
-            # Stima indicativa se non presente tracciamento venduto puntuale
-            df_ord_filtered['Venduto (Pz)'] = (df_ord_filtered['Giacenza Attuale (Pz)'] * 0.4).astype(int)
+            df_ord_filtered['Venduto nel Periodo (Pz)'] = 0
 
-        # Calcolo Quantità da Ordinare: DIFFERENZA TRA VENDUTO ED ESISTENZA
-        df_ord_filtered['Quantità da Ordinare'] = (df_ord_filtered['Venduto (Pz)'] - df_ord_filtered['Giacenza Attuale (Pz)']).apply(lambda x: max(0, x))
+        # --- APPLICAZIONE OPZIONE A: REINTEGRO DEL VENDUTO ---
+        df_ord_filtered['Quantità da Ordinare (Pz)'] = df_ord_filtered['Venduto nel Periodo (Pz)']
 
-        if solo_fabbisogno:
-            df_ord_filtered = df_ord_filtered[df_ord_filtered['Quantità da Ordinare'] > 0]
+        # Indicatore dello Stato della Giacenza
+        def calcola_stato(row):
+            if row['Giacenza Attuale (Pz)'] == 0 and row['Venduto nel Periodo (Pz)'] > 0:
+                return "⚠️ ESAURITO (Giacenza 0)"
+            elif row['Giacenza Attuale (Pz)'] < 3 and row['Venduto nel Periodo (Pz)'] > 0:
+                return "⚡ SCORTA CRITICA (<3 pz)"
+            elif row['Venduto nel Periodo (Pz)'] > 0:
+                return "OK - In Reintegro"
+            else:
+                return "Nessuna Vendita"
+
+        df_ord_filtered['Stato Giacenza'] = df_ord_filtered.apply(calcola_stato, axis=1)
+
+        # Filtro per mostrare solo il venduto/da ordinare
+        if solo_venduto:
+            df_ord_filtered = df_ord_filtered[df_ord_filtered['Quantità da Ordinare (Pz)'] > 0]
 
         df_ord_display = df_ord_filtered[[
             'CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 
-            'Giacenza Attuale (Pz)', 'Venduto (Pz)', 'Quantità da Ordinare'
+            'Giacenza Attuale (Pz)', 'Venduto nel Periodo (Pz)', 'Quantità da Ordinare (Pz)', 'Stato Giacenza'
         ]].copy()
 
         df_ord_display.columns = [
             'Codice Articolo', 'Descrizione', 'Fornitore', 'Marca', 
-            'Giacenza Attuale (Pz)', 'Venduto nel Periodo (Pz)', 'Quantità da Ordinare (Pz)'
+            'Giacenza Attuale (Pz)', 'Venduto nel Periodo (Pz)', 'Quantità da Ordinare (Pz)', 'Stato Giacenza'
         ]
 
-        # Metriche
+        # Metriche in evidenza
         m1, m2, m3 = st.columns(3)
-        m1.metric("Articoli in Elenco", f"{len(df_ord_display):,}")
-        m2.metric("Totale Venduto Periodo", f"{df_ord_display['Venduto nel Periodo (Pz)'].sum():,} pz")
-        m3.metric("TOTALE DA ORDINARE", f"{df_ord_display['Quantità da Ordinare (Pz)'].sum():,} pz")
+        m1.metric("Articoli da Reintegrare", f"{len(df_ord_display):,}")
+        m2.metric("Totale Pezzi Venduti", f"{df_ord_display['Venduto nel Periodo (Pz)'].sum():,} pz")
+        m3.metric("TOTALE DA ORDINARE (REINTEGRO)", f"{df_ord_display['Quantità da Ordinare (Pz)'].sum():,} pz")
 
         # Tabella Ordini
-        st.dataframe(df_ord_display.set_index('Codice Articolo'), use_container_width=True, height=450)
+        st.dataframe(df_ord_display.set_index('Codice Articolo'), use_container_width=True, height=480)
 
         # Pulsanti Esportazione
         o_col1, o_col2 = st.columns(2)
         with o_col1:
             csv_ord = df_ord_display.to_csv(index=False).encode('latin1')
             st.download_button(
-                "📥 Scarica Proposta Ordine (CSV)", 
+                "📥 Scarica Ordine di Reintegro (CSV)", 
                 csv_ord, 
-                "Proposta_Ordine_Bianco_Market.csv", 
+                "Ordine_Reintegro_Bianco_Market.csv", 
                 "text/csv", 
                 use_container_width=True
             )
         with o_col2:
             excel_ord = convert_df_to_excel(df_ord_display, sheet_name='Proposta Ordine')
             st.download_button(
-                "📊 Scarica Proposta Ordine (Excel .xlsx)", 
+                "📊 Scarica Ordine di Reintegro (Excel .xlsx)", 
                 excel_ord, 
-                "Proposta_Ordine_Bianco_Market.xlsx", 
+                "Ordine_Reintegro_Bianco_Market.xlsx", 
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                 use_container_width=True
             )
