@@ -126,7 +126,6 @@ def load_giacenze():
     
     df = pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
     
-    # Conversione numerica colonne giacenza
     num_cols = [c for c in df.columns if c != 'CODICE_ART']
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
@@ -145,7 +144,6 @@ if df_art.empty or df_giac.empty:
     st.warning("⚠️ Impossibile caricare `ARTICOLI.csv` o `Sit_filiali.csv`.")
     st.stop()
 
-# Join dei due dataset
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
 # ---------------------------------------------------------
@@ -208,8 +206,8 @@ if not filiali_scelte_keys:
 df_filtered['Quantità Totale Selezionata'] = df_filtered[filiali_scelte_keys].sum(axis=1)
 
 # Preparazione colonne della tabella
-# Struttura richiesta: CODICE_ART, DESCRIZION, CODICE_FOR, CODICE_MAR + Filiali Selezionate + Totale
 colonne_mappate = {k: MAPPA_FILIALI[k] for k in filiali_scelte_keys}
+nomi_filiali_selezionate = list(colonne_mappate.values())
 
 df_display = df_filtered[[
     'CODICE_ART', 
@@ -218,7 +216,6 @@ df_display = df_filtered[[
     'CODICE_MAR'
 ] + filiali_scelte_keys + ['Quantità Totale Selezionata']].copy()
 
-# Ridenominazione colonne
 df_display = df_display.rename(columns={
     'CODICE_ART': 'Codice Articolo',
     'DESCRIZION': 'Descrizione',
@@ -228,15 +225,55 @@ df_display = df_display.rename(columns={
 })
 
 # ---------------------------------------------------------
-# METRICHE E TABELLA
+# FUNZIONE STILING / COLORAZIONE CONDIZIONALE
+# ---------------------------------------------------------
+def applica_colori_giacenza(df, colonne_numeric):
+    """
+    Applica una gradazione di colore blu alle quantità positive:
+    - Valori alti: Blu scuro con testo bianco.
+    - Valori bassi: Azzurro chiaro con testo nero.
+    - Valori <= 0: Sfondo trasparente/standard.
+    """
+    # Trova il valore massimo assoluto per calcolare la proporzione dell'intensità
+    v_max = df[colonne_numeric].max().max()
+    if pd.isna(v_max) or v_max <= 0:
+        v_max = 1  # Evita divisioni per zero
+
+    def colora_cella(val):
+        if not isinstance(val, (int, float)) or val <= 0:
+            return ''
+        
+        # Rapporto dell'intensità (da 0.15 a 0.85 per evitare colori troppo sbiaditi o troppo neri)
+        ratio = 0.15 + 0.70 * (val / v_max)
+        
+        # Scala di colore da azzurro chiaro a blu scuro (RGB)
+        r = int(225 - (185 * ratio))
+        g = int(238 - (150 * ratio))
+        b = int(250 - (70 * ratio))
+        
+        # Testo bianco se il fondo è sufficientemente scuro
+        text_color = "white" if ratio > 0.55 else "black"
+        
+        return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
+
+    return df.style.map(colora_cella, subset=colonne_numeric)
+
+# ---------------------------------------------------------
+# METRICHE E TABELLA FORMATTATA
 # ---------------------------------------------------------
 k1, k2 = st.columns(2)
 k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
 k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
-st.dataframe(df_display, use_container_width=True, height=500)
+# Colonne numeriche da colorare (solo le filiali)
+colonne_da_colorare = nomi_filiali_selezionate
 
-# Export CSV della vista corrente
+# Applicazione dello stile
+styled_df = applica_colori_giacenza(df_display, colonne_da_colorare)
+
+st.dataframe(styled_df, use_container_width=True, height=550)
+
+# Export CSV
 csv_data = df_display.to_csv(index=False).encode('latin1')
 st.download_button(
     label="📥 Scarica Tabella in CSV",
