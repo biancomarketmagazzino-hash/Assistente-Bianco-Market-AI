@@ -81,10 +81,13 @@ CATEGORIE_L4 = [
 ]
 
 # ---------------------------------------------------------
-# UTILITY PER RICERCA FILE CSV
+# UTILITY CLEANING & MATCHING
 # ---------------------------------------------------------
+def clean_code(series):
+    """Normalizza i codici per garantire un matching perfetto tra dataframes"""
+    return series.astype(str).str.strip().str.upper()
+
 def find_file(filename, base_dir="data"):
-    """Cerca un singolo file partendo dalla radice o dalla cartella data"""
     search_dirs = [base_dir, "data/current", "."]
     for d in search_dirs:
         if os.path.exists(d):
@@ -95,7 +98,6 @@ def find_file(filename, base_dir="data"):
     return None
 
 def find_all_stor_car_files(base_dir="data"):
-    """Scansiona ricorsivamente la cartella data trovando tutti i file STOR_CAR suddivisi nei vari anni"""
     matched_files = []
     search_dirs = [base_dir, "."]
     for d in search_dirs:
@@ -109,36 +111,25 @@ def find_all_stor_car_files(base_dir="data"):
                             matched_files.append(full_path)
     return matched_files
 
-# ---------------------------------------------------------
-# FUNZIONE LETTURA ROBUSTA PER CSV
-# ---------------------------------------------------------
 def safe_read_csv(path):
-    """Prova in sequenza le codifiche ed i separatori più comuni evitando blocchi"""
     if not path or not os.path.exists(path):
         return pd.DataFrame()
 
     for encoding in ['latin1', 'utf-8-sig', 'utf-8', 'cp1252']:
         for sep in [';', ',', '\t', '|']:
             try:
-                df = pd.read_csv(
-                    path, 
-                    encoding=encoding, 
-                    sep=sep, 
-                    on_bad_lines='skip', 
-                    dtype=str
-                )
+                df = pd.read_csv(path, encoding=encoding, sep=sep, on_bad_lines='skip', dtype=str)
                 if len(df.columns) > 1:
                     return df
             except Exception:
                 continue
-
     try:
         return pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
     except Exception:
         return pd.DataFrame()
 
 # ---------------------------------------------------------
-# CARICAMENTO DATI CACHATO
+# CARICAMENTO DATI
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_articoli():
@@ -155,6 +146,9 @@ def load_articoli():
     }
     df = df.rename(columns=rename_dict)
     
+    if 'CODICE_ART' in df.columns:
+        df['CODICE_ART'] = clean_code(df['CODICE_ART'])
+    
     text_cols = ['DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CAT_L1_REPARTO', 'CAT_L2_ARTICOLO', 'CAT_L3_GENERE', 'CAT_L4_TESSUTO']
     for col in text_cols:
         if col in df.columns:
@@ -169,6 +163,9 @@ def load_giacenze():
     if df.empty:
         return pd.DataFrame()
     
+    if 'CODICE_ART' in df.columns:
+        df['CODICE_ART'] = clean_code(df['CODICE_ART'])
+        
     num_cols = [c for c in df.columns if c != 'CODICE_ART']
     for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
@@ -177,7 +174,6 @@ def load_giacenze():
 
 @st.cache_data(ttl=3600)
 def load_stor_car_multianno():
-    """Carica e unisce tutti i file STOR_CAR presenti nelle sottocartelle degli anni dentro 'data'"""
     file_list = find_all_stor_car_files("data")
     if not file_list:
         return pd.DataFrame(), []
@@ -198,9 +194,9 @@ def load_stor_car_multianno():
         col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_temp.columns), None)
 
         if col_art:
-            df_temp = df_temp.rename(columns={col_art: 'CODICE_ART'})
+            df_temp['CODICE_ART'] = clean_code(df_temp[col_art])
         else:
-            df_temp = df_temp.rename(columns={df_temp.columns[0]: 'CODICE_ART'})
+            df_temp['CODICE_ART'] = clean_code(df_temp.iloc[:, 0])
 
         if col_qta:
             df_temp['QUANTITA'] = pd.to_numeric(df_temp[col_qta], errors='coerce').fillna(0).abs().astype(int)
@@ -208,9 +204,11 @@ def load_stor_car_multianno():
             df_temp['QUANTITA'] = 1
 
         if col_data:
-            df_temp['DATA'] = pd.to_datetime(df_temp[col_data], errors='coerce')
+            df_temp['DATA_PARSED'] = pd.to_datetime(df_temp[col_data], errors='coerce')
+        else:
+            df_temp['DATA_PARSED'] = pd.NaT
 
-        dfs.append(df_temp)
+        dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED']])
         loaded_paths.append(path)
 
     if not dfs:
@@ -219,9 +217,6 @@ def load_stor_car_multianno():
     df_stor_combined = pd.concat(dfs, ignore_index=True)
     return df_stor_combined, loaded_paths
 
-# ---------------------------------------------------------
-# FUNZIONE PER ESPORTAZIONE EXCEL (XLSX)
-# ---------------------------------------------------------
 def convert_df_to_excel(df, sheet_name='Data'):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -229,7 +224,7 @@ def convert_df_to_excel(df, sheet_name='Data'):
     return output.getvalue()
 
 # ---------------------------------------------------------
-# CARICAMENTO E PREPARAZIONE DATI
+# CARICAMENTO INIZIALE
 # ---------------------------------------------------------
 st.title("🛍️ Bianco Market - Gestione Esistenze & Ordini da Storico Movimenti")
 
@@ -243,9 +238,6 @@ if df_art.empty or df_giac.empty:
 
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
-# ---------------------------------------------------------
-# FUNZIONE PER APPLICARE FILTRI
-# ---------------------------------------------------------
 def applica_filtri_catalogo(df, search, l1, l2, l3, l4, forn, marca):
     df_f = df.copy()
     if search and search.strip():
@@ -270,9 +262,6 @@ def applica_filtri_catalogo(df, search, l1, l2, l3, l4, forn, marca):
         df_f = df_f[df_f['CODICE_MAR'].isin(marca)]
     return df_f
 
-# ---------------------------------------------------------
-# NAVIGAZIONE TRAMITE SEZIONI (TAB)
-# ---------------------------------------------------------
 tab_giacenze, tab_ordini, tab_statistiche = st.tabs([
     "📦 Giacenze & Catalogo", 
     "🛒 Gestione Ordini & Reintegro Multianno", 
@@ -298,7 +287,6 @@ with tab_giacenze:
     sel_marca = st.sidebar.multiselect("Marca", marche, key="g_marca")
 
     ha_filtri_attivi = bool(search_term.strip() or sel_l1 or sel_l2 or sel_l3 or sel_l4 or sel_fornitore or sel_marca)
-
     df_filtered = applica_filtri_catalogo(df_master, search_term, sel_l1, sel_l2, sel_l3, sel_l4, sel_fornitore, sel_marca)
 
     filiali_scelte_keys = st.multiselect(
@@ -372,7 +360,6 @@ with tab_giacenze:
             c1, c2 = st.columns(2)
 
             with c1:
-                # ✅ FIX ENCODING UTF-8-SIG PER EVITARE UNICODEERROR
                 csv_data = df_display.to_csv(index=False, sep=';').encode('utf-8-sig')
                 st.download_button("📥 Scarica in CSV", csv_data, "Giacenze_Bianco_Market.csv", "text/csv", width="stretch")
 
@@ -381,20 +368,20 @@ with tab_giacenze:
                 st.download_button("📊 Scarica in Excel (.xlsx)", excel_data, "Giacenze_Bianco_Market.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
 
 # =========================================================
-# TAB 2: GESTIONE ORDINI & REINTEGRO MULTIANNO
+# TAB 2: GESTIONE ORDINI & REINTEGRO MULTIANNO (MODELLO NUOVO)
 # =========================================================
 with tab_ordini:
     st.header("🛒 Gestione Ordini & Reintegro da STOR_CAR Multianno")
     
     if not file_caricati:
-        st.warning("⚠️ **Nessun file STOR_CAR trovato nella cartella `data/` o nelle sottocartelle degli anni.**")
+        st.warning("⚠️ **Nessun file STOR_CAR trovato nella cartella `data/`.**")
     else:
-        st.success(f"✅ **Trovati e caricati {len(file_caricati)} file STOR_CAR da `data/` ({len(df_stor):,} righe totali):**")
-        with st.expander("📁 Elenco dei file CSV caricati per anno"):
+        st.success(f"✅ **Caricati {len(file_caricati)} file STOR_CAR ({len(df_stor):,} righe movimenti storici):**")
+        with st.expander("📁 Elenco dei file scaricati"):
             for f in file_caricati:
                 st.write(f"- `{f}`")
 
-    uploaded_file = st.file_uploader("📥 Oppure carica un ulteriore file STOR_CAR / Vendite (CSV)", type=['csv'])
+    uploaded_file = st.file_uploader("📥 Carica un ulteriore file STOR_CAR / Vendite (CSV)", type=['csv'])
     if uploaded_file is not None:
         df_u = safe_read_csv(uploaded_file)
         if not df_u.empty:
@@ -403,17 +390,13 @@ with tab_ordini:
             col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART', 'CODICE ARTICOLO'] if c in df_u.columns), None)
             col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'BATTUTE', 'QT_CAR', 'QTA_MOV'] if c in df_u.columns), None)
             col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_u.columns), None)
-            if col_art:
-                df_u = df_u.rename(columns={col_art: 'CODICE_ART'})
-            if col_qta:
-                df_u['QUANTITA'] = pd.to_numeric(df_u[col_qta], errors='coerce').fillna(0).abs().astype(int)
-            else:
-                df_u['QUANTITA'] = 1
-            if col_data:
-                df_u['DATA'] = pd.to_datetime(df_u[col_data], errors='coerce')
 
-            df_stor = pd.concat([df_stor, df_u], ignore_index=True) if not df_stor.empty else df_u
-            st.info(f"File manuale aggiunto! Totale righe ora: {len(df_stor):,}")
+            df_u['CODICE_ART'] = clean_code(df_u[col_art]) if col_art else clean_code(df_u.iloc[:, 0])
+            df_u['QUANTITA'] = pd.to_numeric(df_u[col_qta], errors='coerce').fillna(0).abs().astype(int) if col_qta else 1
+            df_u['DATA_PARSED'] = pd.to_datetime(df_u[col_data], errors='coerce') if col_data else pd.NaT
+
+            df_stor = pd.concat([df_stor, df_u[['CODICE_ART', 'QUANTITA', 'DATA_PARSED']]], ignore_index=True)
+            st.info(f"File manuale caricato. Righe totali movimenti: {len(df_stor):,}")
 
     with st.form(key="form_ordini"):
         st.subheader("🔍 Filtri Selezione e Date Movimenti")
@@ -460,34 +443,42 @@ with tab_ordini:
     df_ord_filtered = applica_filtri_catalogo(df_master, o_search, o_l1, o_l2, o_l3, o_l4, o_forn, o_marca)
 
     if not filiali_ord_keys:
-        st.warning("Seleziona almeno una filiale per visualizzare la giacenza attuale.")
+        st.warning("Seleziona almeno una filiale per la giacenza attuale.")
     else:
+        # Calcolo Giacenza
         df_ord_filtered['Giacenza Attuale (Pz)'] = df_ord_filtered[filiali_ord_keys].sum(axis=1)
 
-        if not df_stor.empty and 'CODICE_ART' in df_stor.columns:
-            df_v_periodo = df_stor.copy()
+        # AGGREGAZIONE MOVIMENTI VENDUTO (NUOVO ALGORITMO)
+        if not df_stor.empty:
+            df_v = df_stor.copy()
             
-            if 'DATA' in df_v_periodo.columns and len(date_range) == 2:
+            # Filtro temporale
+            if len(date_range) == 2:
                 d_start, d_end = date_range[0], date_range[1]
-                mask_date = (df_v_periodo['DATA'].dt.date >= d_start) & (df_v_periodo['DATA'].dt.date <= d_end)
-                df_v_periodo = df_v_periodo[mask_date]
+                has_date = df_v['DATA_PARSED'].notna()
+                df_v = df_v[~has_date | ((df_v['DATA_PARSED'].dt.date >= d_start) & (df_v['DATA_PARSED'].dt.date <= d_end))]
 
-            venduto_per_art = df_v_periodo.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
-            venduto_per_art.columns = ['CODICE_ART', 'Totale Battute/Venduto (Pz)']
-            
-            df_ord_filtered = pd.merge(df_ord_filtered, venduto_per_art, on='CODICE_ART', how='left')
+            # Aggregazione somme per codice articolo
+            sales_sum = df_v.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
+            sales_sum.columns = ['CODICE_ART', 'Totale Battute/Venduto (Pz)']
+
+            # Merge sicuro su codice ripulito
+            df_ord_filtered = pd.merge(df_ord_filtered, sales_sum, on='CODICE_ART', how='left')
             df_ord_filtered['Totale Battute/Venduto (Pz)'] = df_ord_filtered['Totale Battute/Venduto (Pz)'].fillna(0).astype(int)
         else:
             df_ord_filtered['Totale Battute/Venduto (Pz)'] = 0
 
         df_ord_filtered['Quantità da Ordinare (Pz)'] = df_ord_filtered['Totale Battute/Venduto (Pz)']
 
+        # Calcolo Stato
         def calcola_stato(row):
-            if row['Giacenza Attuale (Pz)'] == 0 and row['Totale Battute/Venduto (Pz)'] > 0:
+            giac = row['Giacenza Attuale (Pz)']
+            vend = row['Totale Battute/Venduto (Pz)']
+            if giac == 0 and vend > 0:
                 return "⚠️ ESAURITO (Giacenza 0)"
-            elif row['Giacenza Attuale (Pz)'] < 3 and row['Totale Battute/Venduto (Pz)'] > 0:
+            elif giac < 3 and vend > 0:
                 return "⚡ SCORTA CRITICA (<3 pz)"
-            elif row['Totale Battute/Venduto (Pz)'] > 0:
+            elif vend > 0:
                 return "OK - In Reintegro"
             else:
                 return "Nessun Movimento"
@@ -519,7 +510,6 @@ with tab_ordini:
 
             o_col1, o_col2 = st.columns(2)
             with o_col1:
-                # ✅ FIX ENCODING UTF-8-SIG PER EVITARE UNICODEERROR SULL'EMOJI ⚡
                 csv_ord = df_ord_display.to_csv(index=False, sep=';').encode('utf-8-sig')
                 st.download_button(
                     "📥 Scarica Ordine Reintegro (CSV)", 
