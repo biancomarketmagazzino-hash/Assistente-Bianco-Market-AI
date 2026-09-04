@@ -1,4 +1,5 @@
 import os
+import io
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -132,6 +133,15 @@ def load_giacenze():
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
         
     return df
+
+# ---------------------------------------------------------
+# FUNZIONE PER ESPORTAZIONE EXCEL (XLSX)
+# ---------------------------------------------------------
+def convert_df_to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Giacenze')
+    return output.getvalue()
 
 # ---------------------------------------------------------
 # CARICAMENTO E PREPARAZIONE DATI
@@ -281,30 +291,49 @@ else:
     # ---------------------------------------------------------
     # PULSANTI DOWNLOAD ED ESPORTAZIONE / STAMPA
     # ---------------------------------------------------------
-    col_dl, col_print = st.columns([1, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
 
-    with col_dl:
+    with c1:
         csv_data = df_display.to_csv(index=False).encode('latin1')
         st.download_button(
-            label="📥 Scarica Tabella in CSV",
+            label="📥 Scarica in CSV",
             data=csv_data,
-            file_name="Giacenze_Filiali_Bianco_Market.csv",
+            file_name="Giacenze_Bianco_Market.csv",
             mime="text/csv",
             use_container_width=True
         )
 
-    with col_print:
-        # Generazione tabella HTML completa per la stampa
-        html_table = df_display.to_html(index=False, classes="print-table-content")
+    with c2:
+        try:
+            excel_data = convert_df_to_excel(df_display)
+            st.download_button(
+                label="📊 Scarica in Excel (.xlsx)",
+                data=excel_data,
+                file_name="Giacenze_Bianco_Market.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        except Exception:
+            # Fallback se xlsxwriter non è installato
+            st.download_button(
+                label="📊 Scarica in XLS",
+                data=csv_data,
+                file_name="Giacenze_Bianco_Market.xls",
+                mime="application/vnd.ms-excel",
+                use_container_width=True
+            )
+
+    with c3:
+        # Pulisce l'HTML per la finestra di stampa
+        clean_html_table = df_display.to_html(index=False)
         
-        # Componente HTML con CSS per la stampa e chiamata al browser parent
-        print_component = f"""
+        print_script = f"""
         <style>
             .print-btn {{
                 background-color: #ff4b4b;
                 color: white;
                 border: none;
-                padding: 10px 16px;
+                padding: 9px 16px;
                 font-size: 14px;
                 font-weight: bold;
                 border-radius: 8px;
@@ -315,53 +344,68 @@ else:
             .print-btn:hover {{
                 background-color: #e03e3e;
             }}
-            
-            @media print {{
-                header, footer, [data-testid="stSidebar"], .stButton, button, .print-btn {{
-                    display: none !important;
-                }}
-                body {{
-                    background: white !important;
-                    color: black !important;
-                    margin: 0 !important;
-                }}
-                .print-container {{
-                    display: block !important;
-                    width: 100% !important;
-                }}
-                table.print-table-content {{
-                    width: 100% !important;
-                    border-collapse: collapse !important;
-                    font-size: 8pt !important;
-                }}
-                table.print-table-content th, table.print-table-content td {{
-                    border: 1px solid #444 !important;
-                    padding: 4px !important;
-                    text-align: center !important;
-                }}
-                table.print-table-content th {{
-                    background-color: #eee !important;
-                    font-weight: bold !important;
-                }}
-                @page {{
-                    size: A4 landscape;
-                    margin: 8mm;
-                }}
-            }}
         </style>
 
-        <button class="print-btn" onclick="triggerPrint()">🖨️ Stampa Tabella (Anteprima & Stampante)</button>
-
-        <div id="print-area" style="display:none;" class="print-container">
-            <h3 style="text-align:center;">Bianco Market - Report Giacenze Filiali</h3>
-            {html_table}
-        </div>
+        <button class="print-btn" onclick="openPrintWindow()">🖨️ Stampa Tabella Complete</button>
 
         <script>
-            function triggerPrint() {{
-                window.parent.print();
+            function openPrintWindow() {{
+                var printWin = window.open('', '_blank', 'width=1100,height=800');
+                var tableContent = `{clean_html_table}`;
+                
+                printWin.document.write(`
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Report Giacenze Filiali - Bianco Market</title>
+                        <style>
+                            body {{
+                                font-family: Arial, sans-serif;
+                                margin: 15px;
+                                color: #333;
+                            }}
+                            h2 {{
+                                text-align: center;
+                                margin-bottom: 15px;
+                                font-size: 18px;
+                            }}
+                            table {{
+                                width: 100%;
+                                border-collapse: collapse;
+                                font-size: 10px;
+                            }}
+                            th, td {{
+                                border: 1px solid #777;
+                                padding: 5px 6px;
+                                text-align: center;
+                            }}
+                            th {{
+                                background-color: #f2f2f2;
+                                font-weight: bold;
+                            }}
+                            tr:nth-child(even) {{
+                                background-color: #fafafa;
+                            }}
+                            @page {{
+                                size: A4 landscape;
+                                margin: 8mm;
+                            }}
+                        </style>
+                    </head>
+                    <body>
+                        <h2>Bianco Market - Report Giacenze Filiali</h2>
+                        $TABLE_PLACEHOLDER$
+                    </body>
+                    </html>
+                `.replace('$TABLE_PLACEHOLDER$', tableContent));
+
+                printWin.document.close();
+                printWin.focus();
+                
+                setTimeout(function() {{
+                    printWin.print();
+                }}, 500);
             }}
         </script>
         """
-        
-        components.html(print_component, height=45)
+        components.html(print_script, height=45)
