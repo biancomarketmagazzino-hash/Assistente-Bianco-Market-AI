@@ -82,13 +82,19 @@ CATEGORIE_L4 = [
 ]
 
 # ---------------------------------------------------------
-# FUNZIONI DI UTILITÀ
+# FUNZIONI DI UTILITÀ E PARSING
 # ---------------------------------------------------------
 def clean_code(series):
     return series.astype(str).str.strip().str.upper()
 
 def parse_date_it(series):
     return pd.to_datetime(series, format='%d/%m/%Y', errors='coerce', dayfirst=True)
+
+def parse_numeric_quantity(series):
+    """Pulisce e converte correttamente i numeri gestendo virgole e punti italiani"""
+    s_clean = series.astype(str).str.strip().str.replace(',', '.', regex=False)
+    # Se ci sono valori tipo 1.00 converte in float e poi int
+    return pd.to_numeric(s_clean, errors='coerce').fillna(0).round().astype(int)
 
 def find_file(filename, base_dir="data"):
     search_dirs = [base_dir, "data/current", "."]
@@ -101,23 +107,20 @@ def find_file(filename, base_dir="data"):
     return None
 
 def find_2026_storici_files(base_dir="data"):
-    """Cerca SOLO i file di storico relativi al 2026 evitando sottocartelle obsolete."""
     matched_files = []
     search_dirs = [os.path.join(base_dir, "storici"), base_dir, "."]
     
     for d in search_dirs:
         if os.path.exists(d):
             for root, dirs, files in os.walk(d):
-                # Esclude percorsi storici non-2026 se presenti in cartelle vecchie
                 if "2025" in root or "2024" in root:
                     continue
                 for f in files:
                     f_upper = f.upper()
                     if ("STOR_CAR" in f_upper or "VENDITE" in f_upper or "VENDUTO" in f_upper) and f_upper.endswith(".CSV"):
-                        if "2026" in f_upper or "STORICI" in root.upper() or "DATA" in root.upper():
-                            full_path = os.path.join(root, f)
-                            if full_path not in matched_files:
-                                matched_files.append(full_path)
+                        full_path = os.path.join(root, f)
+                        if full_path not in matched_files:
+                            matched_files.append(full_path)
     return matched_files
 
 def safe_read_csv(path):
@@ -135,7 +138,7 @@ def safe_read_csv(path):
     return pd.DataFrame()
 
 # ---------------------------------------------------------
-# CARICAMENTO DATI CON CACHE
+# CARICAMENTO DATI
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_articoli():
@@ -151,7 +154,6 @@ def load_articoli():
         'CAT_LEVEL_4': 'CAT_L4_TESSUTO'
     }
     df = df.rename(columns=rename_dict)
-    
     if 'CODICE_ART' in df.columns:
         df['CODICE_ART'] = clean_code(df['CODICE_ART'])
     
@@ -174,7 +176,7 @@ def load_giacenze():
         
     cols_filiali = [c for c in df.columns if c in MAPPA_FILIALI.keys()]
     for col in cols_filiali:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        df[col] = parse_numeric_quantity(df[col])
         
     return df
 
@@ -196,7 +198,12 @@ def load_stor_car_multianno():
         df_temp = df_temp.rename(columns=cols_upper)
 
         col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART'] if c in df_temp.columns), None)
-        col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'QT_CAR'] if c in df_temp.columns), None)
+        
+        # Mappatura rigorosa per evitare di scambiare la Quantità con Importi o Prezzi
+        col_qta = next((c for c in ['QUANTITA', 'QTA', 'PZ_VENDUTI', 'PEZZI'] if c in df_temp.columns), None)
+        if not col_qta:
+            col_qta = next((c for c in ['VENDUTO', 'QT_CAR'] if c in df_temp.columns and "IMP" not in c and "PREZZO" not in c), None)
+
         col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_temp.columns), None)
         col_pv = next((c for c in ['CODICE_PV', 'PV', 'PUNTO_VENDITA', 'FILIALE', 'COD_FILIALE'] if c in df_temp.columns), None)
 
@@ -204,7 +211,7 @@ def load_stor_car_multianno():
             continue
 
         df_temp['CODICE_ART'] = clean_code(df_temp[col_art])
-        df_temp['QUANTITA'] = pd.to_numeric(df_temp[col_qta], errors='coerce').fillna(0).astype(int)
+        df_temp['QUANTITA'] = parse_numeric_quantity(df_temp[col_qta])
         df_temp['DATA_PARSED'] = parse_date_it(df_temp[col_data])
 
         if col_pv:
@@ -212,18 +219,18 @@ def load_stor_car_multianno():
         else:
             df_temp['CODICE_PV'] = 'TUTTI'
 
-        # Rimuove eventuali righe con date non valide
         df_temp = df_temp.dropna(subset=['DATA_PARSED'])
+        
+        # Mantiene traccia della fonte per la diagnostica
+        df_temp['FILE_ORIGINE'] = os.path.basename(path)
 
-        dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED', 'CODICE_PV']])
+        dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED', 'CODICE_PV', 'FILE_ORIGINE']])
         loaded_paths.append(path)
 
     if not dfs:
         return pd.DataFrame(), []
 
     df_stor_combined = pd.concat(dfs, ignore_index=True)
-    # Rimuove duplicati esatti di movimento se presenti
-    df_stor_combined = df_stor_combined.drop_duplicates()
     return df_stor_combined, loaded_paths
 
 def convert_df_to_excel(df, sheet_name='Data'):
@@ -363,7 +370,6 @@ with tab_ordini:
         d_start = pd.Timestamp(data_inizio)
         d_end = pd.Timestamp(data_fine)
 
-        # Filtra rigorosamente solo per il range di date selezionato
         mask_periodo = (df_stor['DATA_PARSED'] >= d_start) & (df_stor['DATA_PARSED'] <= d_end)
         df_venduto_filtrato = df_stor[mask_periodo]
 
@@ -398,6 +404,22 @@ with tab_ordini:
     m3.metric("Totale Pezzi da Riordinare", f"{df_risultato['Proposta Reintegro (Pz)'].sum():,} pz")
 
     st.dataframe(df_risultato.set_index('Codice Articolo'), width="stretch", height=500)
+
+    # ---------------------------------------------------------
+    # VERIFICA TRACCIABILITÀ SINGOLO ARTICOLO
+    # ---------------------------------------------------------
+    if o_search.strip() and not df_stor.empty:
+        st.subheader("🔍 Tracciabilità e Controllo Righe Storico")
+        art_cod = o_search.strip().upper()
+        df_check = df_stor[(df_stor['CODICE_ART'] == art_cod) & 
+                           (df_stor['DATA_PARSED'] >= pd.Timestamp(data_inizio)) & 
+                           (df_stor['DATA_PARSED'] <= pd.Timestamp(data_fine))]
+        if not df_check.empty:
+            st.write(f"Movimenti trovati per `{art_cod}` tra {data_inizio.strftime('%d/%m/%Y')} e {data_fine.strftime('%d/%m/%Y')}:")
+            st.dataframe(df_check[['CODICE_ART', 'QUANTITA', 'DATA_PARSED', 'CODICE_PV', 'FILE_ORIGINE']])
+            st.info(f"Somma Totale Righe lette per {art_cod}: **{df_check['QUANTITA'].sum()} pz**")
+        else:
+            st.warning("Nessuna riga trovata nello storico per il codice cercato nell'intervallo selezionato.")
 
     exp_c1, exp_c2 = st.columns(2)
     with exp_c1:
@@ -452,21 +474,21 @@ with tab_dettaglio_pv:
 with tab_diagnostica:
     st.header("🔧 Diagnostica Dati e Integrità Files")
     
-    st.write("**File di Storico Vendite 2026 Rilevati:**")
+    st.write("**File di Storico Rilevati:**")
     if file_caricati:
         for f in file_caricati:
             st.code(f)
     else:
-        st.warning("Nessun file STOR_CAR trovato nella cartella data/storici")
+        st.warning("Nessun file STOR_CAR trovato nella cartella data/")
 
     if not df_stor.empty:
         st.subheader("Anteprima Dati Caricati:")
-        st.write(f"Totale movimenti rilevati nel 2026: **{len(df_stor):,}**")
+        st.write(f"Totale movimenti rilevati: **{len(df_stor):,}**")
         
         date_valide = df_stor['DATA_PARSED'].dropna()
         if not date_valide.empty:
             st.info(f"📅 Data Inizio Storico: **{date_valide.min().strftime('%d/%m/%Y')}** | Data Fine Storico: **{date_valide.max().strftime('%d/%m/%Y')}**")
         
         df_preview = df_stor.head(20).copy()
-        df_preview.columns = ['Codice Articolo', 'Quantità', 'Data Formattata', 'Codice PV']
+        df_preview.columns = ['Codice Articolo', 'Quantità', 'Data Formattata', 'Codice PV', 'File Origine']
         st.dataframe(df_preview, width="stretch")
