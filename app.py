@@ -2,7 +2,6 @@ import os
 import io
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 # ---------------------------------------------------------
 # CONFIGURAZIONE PAGINA STREAMLIT
@@ -95,15 +94,42 @@ def find_file(filename, possible_dirs=None):
     return None
 
 # ---------------------------------------------------------
+# FUNZIONE LETTURA ROBUSTA PER CSV SCONOSCIUTI
+# ---------------------------------------------------------
+def safe_read_csv(path):
+    """Prova in sequenza i separatori più comuni evitando l'errore del csv.Sniffer()"""
+    if not path or not os.path.exists(path):
+        return pd.DataFrame()
+
+    for sep in [';', ',', '\t', '|']:
+        try:
+            df = pd.read_csv(
+                path, 
+                encoding='latin1', 
+                sep=sep, 
+                on_bad_lines='skip', 
+                dtype=str
+            )
+            if len(df.columns) > 1:
+                return df
+        except Exception:
+            continue
+
+    # Fallback se le opzioni precedenti falliscono
+    try:
+        return pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
+    except Exception:
+        return pd.DataFrame()
+
+# ---------------------------------------------------------
 # CARICAMENTO DATI CACHATO
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_articoli():
     path = find_file("ARTICOLI")
-    if not path:
+    df = safe_read_csv(path)
+    if df.empty:
         return pd.DataFrame()
-    
-    df = pd.read_csv(path, encoding='latin1', sep=None, engine='python', on_bad_lines='skip', dtype=str)
     
     rename_dict = {
         'CODICE_CAT': 'CAT_L1_REPARTO',
@@ -123,10 +149,9 @@ def load_articoli():
 @st.cache_data(ttl=3600)
 def load_giacenze():
     path = find_file("Sit_filiali")
-    if not path:
+    df = safe_read_csv(path)
+    if df.empty:
         return pd.DataFrame()
-    
-    df = pd.read_csv(path, encoding='latin1', sep=None, engine='python', on_bad_lines='skip', dtype=str)
     
     num_cols = [c for c in df.columns if c != 'CODICE_ART']
     for col in num_cols:
@@ -137,29 +162,28 @@ def load_giacenze():
 @st.cache_data(ttl=3600)
 def load_stor_car():
     path = find_file("STOR_CAR") or find_file("VENDITE") or find_file("Venduto")
-    if not path:
+    df = safe_read_csv(path)
+    if df.empty:
         return pd.DataFrame()
     
-    df = pd.read_csv(path, encoding='latin1', sep=None, engine='python', on_bad_lines='skip', dtype=str)
-    
-    # Normalizzazione Nomi Colonne
+    # Normalizzazione Nomi Colonne (Tutto in maiuscolo e pulito da spazi)
     cols_upper = {c: str(c).upper().strip() for c in df.columns}
     df = df.rename(columns=cols_upper)
 
-    col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART'] if c in df.columns), None)
-    col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'BATTUTE', 'QT_CAR'] if c in df.columns), None)
+    # Identificazione dinamica colonne chiave
+    col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART', 'CODICE ARTICOLO'] if c in df.columns), None)
+    col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'BATTUTE', 'QT_CAR', 'QTA_MOV'] if c in df.columns), None)
     col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df.columns), None)
 
     if col_art:
         df = df.rename(columns={col_art: 'CODICE_ART'})
     else:
-        # Prende la prima colonna se non trovata per nome
         df = df.rename(columns={df.columns[0]: 'CODICE_ART'})
 
     if col_qta:
         df['QUANTITA'] = pd.to_numeric(df[col_qta], errors='coerce').fillna(0).abs().astype(int)
     else:
-        # Se non c'è una colonna quantità, ogni riga/battuta vale 1
+        # Se non c'è colonna quantità, ogni riga rappresenta 1 battuta
         df['QUANTITA'] = 1
 
     if col_data:
@@ -186,7 +210,7 @@ df_giac = load_giacenze()
 df_stor = load_stor_car()
 
 if df_art.empty or df_giac.empty:
-    st.warning("⚠️ Impossibile caricare `ARTICOLI.csv` o `Sit_filiali.csv`.")
+    st.warning("⚠️ Impossibile caricare `ARTICOLI.csv` o `Sit_filiali.csv`. Verificare la presenza dei file nella cartella del progetto.")
     st.stop()
 
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
@@ -335,7 +359,7 @@ with tab_ordini:
     
     # Stato File STOR_CAR
     if df_stor.empty:
-        st.warning("⚠️ **File STOR_CAR non trovato**: Inserire `STOR_CAR.csv` nella cartella del progetto per calcolare in automatico le battute di vendita.")
+        st.warning("⚠️ **File STOR_CAR non trovato o vuoto**: Inserire `STOR_CAR.csv` nella cartella del progetto per calcolare in automatico le battute di vendita.")
     else:
         st.success(f"✅ **Storico Movimenti (STOR_CAR) Caricato**: {len(df_stor):,} battute/righe analizzate.")
 
