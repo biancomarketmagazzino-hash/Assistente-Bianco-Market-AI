@@ -10,6 +10,26 @@ st.set_page_config(
     layout="wide"
 )
 
+# CSS Personalizzato per ottimizzare la Stampa
+st.markdown("""
+    <style>
+    @media print {
+        /* Nasconde la sidebar e i pulsanti quando si stampa */
+        section[data-testid="stSidebar"], 
+        .stButton, 
+        .stDownloadButton, 
+        footer, 
+        header {
+            display: none !important;
+        }
+        .main .block-container {
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # ---------------------------------------------------------
 # MAPPATURA UFFICIALE FILIALI E CATEGORIE
 # ---------------------------------------------------------
@@ -228,30 +248,19 @@ df_display = df_display.rename(columns={
 # FUNZIONE STILING / COLORAZIONE CONDIZIONALE
 # ---------------------------------------------------------
 def applica_colori_giacenza(df, colonne_numeric):
-    """
-    Applica una gradazione di colore blu alle quantità positive:
-    - Valori alti: Blu scuro con testo bianco.
-    - Valori bassi: Azzurro chiaro con testo nero.
-    - Valori <= 0: Sfondo trasparente/standard.
-    """
-    # Trova il valore massimo assoluto per calcolare la proporzione dell'intensità
     v_max = df[colonne_numeric].max().max()
     if pd.isna(v_max) or v_max <= 0:
-        v_max = 1  # Evita divisioni per zero
+        v_max = 1
 
     def colora_cella(val):
         if not isinstance(val, (int, float)) or val <= 0:
             return ''
         
-        # Rapporto dell'intensità (da 0.15 a 0.85 per evitare colori troppo sbiaditi o troppo neri)
         ratio = 0.15 + 0.70 * (val / v_max)
-        
-        # Scala di colore da azzurro chiaro a blu scuro (RGB)
         r = int(225 - (185 * ratio))
         g = int(238 - (150 * ratio))
         b = int(250 - (70 * ratio))
         
-        # Testo bianco se il fondo è sufficientemente scuro
         text_color = "white" if ratio > 0.55 else "black"
         
         return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
@@ -265,19 +274,45 @@ k1, k2 = st.columns(2)
 k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
 k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
-# Colonne numeriche da colorare (solo le filiali)
-colonne_da_colorare = nomi_filiali_selezionate
+# Colonne numeriche da colorare
+styled_df = applica_colori_giacenza(df_display, nomi_filiali_selezionate)
 
-# Applicazione dello stile
-styled_df = applica_colori_giacenza(df_display, colonne_da_colorare)
-
-st.dataframe(styled_df, use_container_width=True, height=550)
-
-# Export CSV
-csv_data = df_display.to_csv(index=False).encode('latin1')
-st.download_button(
-    label="📥 Scarica Tabella in CSV",
-    data=csv_data,
-    file_name="Giacenze_Filiali_Bianco_Market.csv",
-    mime="text/csv"
+# Visualizzazione dataframe SENZA l'indice numerico di riga
+st.dataframe(
+    styled_df, 
+    use_container_width=True, 
+    height=550, 
+    hide_index=True
 )
+
+# ---------------------------------------------------------
+# PULSANTI D'AZIONE: DOWNLOAD ED STAMPA
+# ---------------------------------------------------------
+col_btn1, col_btn2 = st.columns([1, 4])
+
+with col_btn1:
+    csv_data = df_display.to_csv(index=False).encode('latin1')
+    st.download_button(
+        label="📥 Scarica CSV",
+        data=csv_data,
+        file_name="Giacenze_Filiali_Bianco_Market.csv",
+        mime="text/csv"
+    )
+
+with col_btn2:
+    # Tasto per la Stampa Rapida basato su JavaScript
+    st.components.v1.html(
+        """
+        <button onclick="window.parent.print()" style="
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            padding: 9px 18px;
+            font-size: 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+        ">🖨️ Stampa Rapida Tabella</button>
+        """,
+        height=45
+    )
