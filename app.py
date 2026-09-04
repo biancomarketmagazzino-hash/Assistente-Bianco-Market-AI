@@ -88,7 +88,6 @@ def clean_code(series):
     return series.astype(str).str.strip().str.upper()
 
 def parse_date_it(series):
-    """Parsing forzato per date italiane GG/MM/AAAA"""
     return pd.to_datetime(series, format='%d/%m/%Y', errors='coerce', dayfirst=True)
 
 def find_file(filename, base_dir="data"):
@@ -101,18 +100,24 @@ def find_file(filename, base_dir="data"):
                         return os.path.join(root, f)
     return None
 
-def find_all_stor_car_files(base_dir="data"):
+def find_2026_storici_files(base_dir="data"):
+    """Cerca SOLO i file di storico relativi al 2026 evitando sottocartelle obsolete."""
     matched_files = []
-    search_dirs = [base_dir, "."]
+    search_dirs = [os.path.join(base_dir, "storici"), base_dir, "."]
+    
     for d in search_dirs:
         if os.path.exists(d):
             for root, dirs, files in os.walk(d):
+                # Esclude percorsi storici non-2026 se presenti in cartelle vecchie
+                if "2025" in root or "2024" in root:
+                    continue
                 for f in files:
                     f_upper = f.upper()
                     if ("STOR_CAR" in f_upper or "VENDITE" in f_upper or "VENDUTO" in f_upper) and f_upper.endswith(".CSV"):
-                        full_path = os.path.join(root, f)
-                        if full_path not in matched_files:
-                            matched_files.append(full_path)
+                        if "2026" in f_upper or "STORICI" in root.upper() or "DATA" in root.upper():
+                            full_path = os.path.join(root, f)
+                            if full_path not in matched_files:
+                                matched_files.append(full_path)
     return matched_files
 
 def safe_read_csv(path):
@@ -127,10 +132,7 @@ def safe_read_csv(path):
                     return df
             except Exception:
                 continue
-    try:
-        return pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
-    except Exception:
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 # ---------------------------------------------------------
 # CARICAMENTO DATI CON CACHE
@@ -178,7 +180,7 @@ def load_giacenze():
 
 @st.cache_data(ttl=3600)
 def load_stor_car_multianno():
-    file_list = find_all_stor_car_files("data")
+    file_list = find_2026_storici_files("data")
     if not file_list:
         return pd.DataFrame(), []
 
@@ -193,30 +195,25 @@ def load_stor_car_multianno():
         cols_upper = {c: str(c).upper().strip() for c in df_temp.columns}
         df_temp = df_temp.rename(columns=cols_upper)
 
-        col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART', 'CODICE ARTICOLO'] if c in df_temp.columns), None)
-        col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'BATTUTE', 'QT_CAR', 'QTA_MOV'] if c in df_temp.columns), None)
+        col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART'] if c in df_temp.columns), None)
+        col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'QT_CAR'] if c in df_temp.columns), None)
         col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_temp.columns), None)
         col_pv = next((c for c in ['CODICE_PV', 'PV', 'PUNTO_VENDITA', 'FILIALE', 'COD_FILIALE'] if c in df_temp.columns), None)
 
-        if col_art:
-            df_temp['CODICE_ART'] = clean_code(df_temp[col_art])
-        else:
-            df_temp['CODICE_ART'] = clean_code(df_temp.iloc[:, 0])
+        if not col_art or not col_qta or not col_data:
+            continue
 
-        if col_qta:
-            df_temp['QUANTITA'] = pd.to_numeric(df_temp[col_qta], errors='coerce').fillna(0).abs().astype(int)
-        else:
-            df_temp['QUANTITA'] = 1
-
-        if col_data:
-            df_temp['DATA_PARSED'] = parse_date_it(df_temp[col_data])
-        else:
-            df_temp['DATA_PARSED'] = pd.NaT
+        df_temp['CODICE_ART'] = clean_code(df_temp[col_art])
+        df_temp['QUANTITA'] = pd.to_numeric(df_temp[col_qta], errors='coerce').fillna(0).astype(int)
+        df_temp['DATA_PARSED'] = parse_date_it(df_temp[col_data])
 
         if col_pv:
             df_temp['CODICE_PV'] = df_temp[col_pv].astype(str).str.strip()
         else:
             df_temp['CODICE_PV'] = 'TUTTI'
+
+        # Rimuove eventuali righe con date non valide
+        df_temp = df_temp.dropna(subset=['DATA_PARSED'])
 
         dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED', 'CODICE_PV']])
         loaded_paths.append(path)
@@ -225,6 +222,8 @@ def load_stor_car_multianno():
         return pd.DataFrame(), []
 
     df_stor_combined = pd.concat(dfs, ignore_index=True)
+    # Rimuove duplicati esatti di movimento se presenti
+    df_stor_combined = df_stor_combined.drop_duplicates()
     return df_stor_combined, loaded_paths
 
 def convert_df_to_excel(df, sheet_name='Data'):
@@ -302,22 +301,18 @@ with tab_giacenze:
 
     df_filtered = applica_filtri_catalogo(df_master, search_term, sel_l1, sel_l2, sel_l3, sel_l4, sel_fornitore, sel_marca)
 
-    # Selezione con nomi trasparenti (senza 'C_01')
-    nOMI_FILIALI = list(MAPPA_FILIALI.values())
+    nomi_filiali = list(MAPPA_FILIALI.values())
     filiali_selezionate_nomi = st.multiselect(
         "Seleziona i Punti Vendita da includere nella Giacenza Totale:",
-        options=nOMI_FILIALI,
-        default=nOMI_FILIALI,
+        options=nomi_filiali,
+        default=nomi_filiali,
         key="g_filiali"
     )
 
-    # Mappatura inversa per il calcolo
     keys_selezionate = [k for k, v in MAPPA_FILIALI.items() if v in filiali_selezionate_nomi]
 
     if keys_selezionate:
         df_filtered['Giacenza Totale (Pz)'] = df_filtered[keys_selezionate].sum(axis=1)
-        
-        # Rinomina diretta colonne per la visualizzazione pulita
         colonne_mappate = {k: MAPPA_FILIALI[k] for k in keys_selezionate}
         cols_display = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR'] + keys_selezionate + ['Giacenza Totale (Pz)']
         
@@ -343,7 +338,7 @@ with tab_ordini:
         
         c1, c2, c3 = st.columns([1.5, 1.5, 1])
         with c1:
-            data_inizio = st.date_input("Data Inizio:", datetime.date(2026, 6, 1), format="DD/MM/YYYY")
+            data_inizio = st.date_input("Data Inizio:", datetime.date(2026, 6, 10), format="DD/MM/YYYY")
         with c2:
             data_fine = st.date_input("Data Fine:", datetime.date(2026, 9, 4), format="DD/MM/YYYY")
         with c3:
@@ -361,19 +356,17 @@ with tab_ordini:
 
     df_ord_base = applica_filtri_catalogo(df_master, o_search, sel_l1, sel_l2, sel_l3, sel_l4, sel_fornitore, sel_marca)
 
-    # Giacenza totale sommata su tutte le filiali
     tutte_filiali = list(MAPPA_FILIALI.keys())
     df_ord_base['Giacenza Totale (Tutti i PV)'] = df_ord_base[tutte_filiali].sum(axis=1)
 
-    # Filtraggio del venduto storico nel periodo
     if not df_stor.empty and data_inizio and data_fine:
-        d_start = pd.to_datetime(data_inizio)
-        d_end = pd.to_datetime(data_fine)
+        d_start = pd.Timestamp(data_inizio)
+        d_end = pd.Timestamp(data_fine)
 
-        mask_periodo = (df_stor['DATA_PARSED'].notna()) & (df_stor['DATA_PARSED'] >= d_start) & (df_stor['DATA_PARSED'] <= d_end)
+        # Filtra rigorosamente solo per il range di date selezionato
+        mask_periodo = (df_stor['DATA_PARSED'] >= d_start) & (df_stor['DATA_PARSED'] <= d_end)
         df_venduto_filtrato = df_stor[mask_periodo]
 
-        # Aggregazione del venduto per codice articolo
         venduto_agg = df_venduto_filtrato.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
         venduto_agg.columns = ['CODICE_ART', 'Quantità Venduta (Periodo)']
 
@@ -382,7 +375,6 @@ with tab_ordini:
     else:
         df_ord_base['Quantità Venduta (Periodo)'] = 0
 
-    # Calcolo proposta reintegro
     df_ord_base['Fabbisogno'] = (df_ord_base['Quantità Venduta (Periodo)'] * moltiplicatore_reintegro) + scorta_minima
     df_ord_base['Proposta Reintegro (Pz)'] = df_ord_base['Fabbisogno'] - df_ord_base['Giacenza Totale (Tutti i PV)']
     df_ord_base['Proposta Reintegro (Pz)'] = df_ord_base['Proposta Reintegro (Pz)'].apply(lambda x: max(0, int(round(x))))
@@ -440,7 +432,7 @@ with tab_dettaglio_pv:
 
             if not df_stor.empty and 'CODICE_PV' in df_stor.columns:
                 mask_art = df_stor['CODICE_ART'] == cod_clean
-                mask_dates = (df_stor['DATA_PARSED'] >= pd.to_datetime(data_inizio)) & (df_stor['DATA_PARSED'] <= pd.to_datetime(data_fine))
+                mask_dates = (df_stor['DATA_PARSED'] >= pd.Timestamp(data_inizio)) & (df_stor['DATA_PARSED'] <= pd.Timestamp(data_fine))
                 df_stor_art = df_stor[mask_art & mask_dates]
 
                 venduto_pv = df_stor_art.groupby('CODICE_PV')['QUANTITA'].sum().reset_index()
@@ -460,16 +452,16 @@ with tab_dettaglio_pv:
 with tab_diagnostica:
     st.header("🔧 Diagnostica Dati e Integrità Files")
     
-    st.write("**File di Storico Vendite Riconosciuti:**")
+    st.write("**File di Storico Vendite 2026 Rilevati:**")
     if file_caricati:
         for f in file_caricati:
             st.code(f)
     else:
-        st.warning("Nessun file STOR_CAR trovato nella cartella data/")
+        st.warning("Nessun file STOR_CAR trovato nella cartella data/storici")
 
     if not df_stor.empty:
         st.subheader("Anteprima Dati Caricati:")
-        st.write(f"Totale movimenti rilevati: **{len(df_stor):,}**")
+        st.write(f"Totale movimenti rilevati nel 2026: **{len(df_stor):,}**")
         
         date_valide = df_stor['DATA_PARSED'].dropna()
         if not date_valide.empty:
