@@ -16,7 +16,6 @@ st.set_page_config(
 st.markdown("""
     <style>
     @media print {
-        /* Nasconde elementi di interfaccia inutili in stampa */
         section[data-testid="stSidebar"], 
         .stButton, 
         .stDownloadButton, 
@@ -26,14 +25,12 @@ st.markdown("""
             display: none !important;
         }
         
-        /* Rimuove i margini della pagina di Streamlit */
         .main .block-container {
             padding: 0 !important;
             margin: 0 !important;
             max-width: 100% !important;
         }
 
-        /* Forza il contenitore della tabella ad espandersi interamente senza scrollbar */
         [data-testid="stDataFrame"], 
         [data-testid="stTable"], 
         div[data-baseweb="data-table"],
@@ -43,7 +40,6 @@ st.markdown("""
             max-height: none !important;
         }
 
-        /* Evita che la tabella si spezzi in modo anomalo tra le pagine */
         tr {
             page-break-inside: avoid !important;
         }
@@ -266,7 +262,7 @@ df_display = df_display.rename(columns={
 })
 
 # ---------------------------------------------------------
-# FUNZIONE STILING / COLORAZIONE CONDIZIONALE
+# FUNZIONE STYLING / COLORAZIONE CONDIZIONALE
 # ---------------------------------------------------------
 def applica_colori_giacenza(df, colonne_numeric):
     v_max = df[colonne_numeric].max().max()
@@ -286,7 +282,9 @@ def applica_colori_giacenza(df, colonne_numeric):
         
         return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
 
-    return df.style.map(colora_cella, subset=colonne_numeric)
+    # Applica lo stile e nasconde l'indice di riga direttamente nello Styler
+    styler = df.style.map(colora_cella, subset=colonne_numeric)
+    return styler.hide(axis='index')
 
 # ---------------------------------------------------------
 # METRICHE E TABELLA FORMATTATA
@@ -295,15 +293,14 @@ k1, k2 = st.columns(2)
 k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
 k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
-# Colonne numeriche da colorare
+# Creazione dell'oggetto Styler
 styled_df = applica_colori_giacenza(df_display, nomi_filiali_selezionate)
 
-# Visualizzazione dataframe
+# Visualizzazione dataframe (senza passare hide_index)
 st.dataframe(
     styled_df, 
     use_container_width=True, 
-    height=550, 
-    hide_index=True
+    height=550
 )
 
 # ---------------------------------------------------------
