@@ -158,254 +158,307 @@ if df_art.empty or df_giac.empty:
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
 # ---------------------------------------------------------
-# SIDEBAR - FILTRI CATALOGO
+# NAVIGAZIONE TRAMITE SEZIONI (TAB)
 # ---------------------------------------------------------
-st.sidebar.header("🔍 Filtri Catalogo")
+tab_giacenze, tab_ordini, tab_statistiche = st.tabs([
+    "📦 Giacenze & Catalogo", 
+    "🛒 Gestione Ordini", 
+    "📊 Statistiche & Performance"
+])
 
-search_term = st.sidebar.text_input("🔎 Ricerca per Descrizione o Codice ART", "", placeholder="Es: STROFINACCI")
+# =========================================================
+# TAB 1: GIACENZE E CATALOGO
+# =========================================================
+with tab_giacenze:
+    st.sidebar.header("🔍 Filtri Catalogo")
 
-sel_l1 = st.sidebar.multiselect("Livello 1: Reparto", CATEGORIE_L1)
-sel_l2 = st.sidebar.multiselect("Livello 2: Tipologia Articolo", CATEGORIE_L2)
-sel_l3 = st.sidebar.multiselect("Livello 3: Genere / Misura", CATEGORIE_L3)
-sel_l4 = st.sidebar.multiselect("Livello 4: Materiale / Tessuto", CATEGORIE_L4)
+    search_term = st.sidebar.text_input("🔎 Ricerca per Descrizione o Codice ART", "", placeholder="Es: STROFINACCI")
 
-fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f != '-']) if 'CODICE_FOR' in df_master.columns else []
-sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
+    sel_l1 = st.sidebar.multiselect("Livello 1: Reparto", CATEGORIE_L1)
+    sel_l2 = st.sidebar.multiselect("Livello 2: Tipologia Articolo", CATEGORIE_L2)
+    sel_l3 = st.sidebar.multiselect("Livello 3: Genere / Misura", CATEGORIE_L3)
+    sel_l4 = st.sidebar.multiselect("Livello 4: Materiale / Tessuto", CATEGORIE_L4)
 
-marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m != '-']) if 'CODICE_MAR' in df_master.columns else []
-sel_marca = st.sidebar.multiselect("Marca", marche)
+    fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f != '-']) if 'CODICE_FOR' in df_master.columns else []
+    sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
 
-# VERIFICA FILTRI ATTIVI
-ha_filtri_attivi = bool(
-    search_term.strip() or 
-    sel_l1 or 
-    sel_l2 or 
-    sel_l3 or 
-    sel_l4 or 
-    sel_fornitore or 
-    sel_marca
-)
+    marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m != '-']) if 'CODICE_MAR' in df_master.columns else []
+    sel_marca = st.sidebar.multiselect("Marca", marche)
 
-# APPLICAZIONE FILTRI
-df_filtered = df_master.copy()
+    ha_filtri_attivi = bool(
+        search_term.strip() or 
+        sel_l1 or 
+        sel_l2 or 
+        sel_l3 or 
+        sel_l4 or 
+        sel_fornitore or 
+        sel_marca
+    )
 
-if search_term.strip():
-    words = search_term.strip().split()
-    combined_text = df_filtered['DESCRIZION'].fillna('') + ' ' + df_filtered['CODICE_ART'].fillna('')
-    mask = pd.Series(True, index=df_filtered.index)
-    for word in words:
-        mask = mask & combined_text.str.contains(word, case=False, regex=False)
-    df_filtered = df_filtered[mask]
+    df_filtered = df_master.copy()
 
-if sel_l1 and 'CAT_L1_REPARTO' in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered['CAT_L1_REPARTO'].isin(sel_l1)]
-if sel_l2 and 'CAT_L2_ARTICOLO' in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered['CAT_L2_ARTICOLO'].isin(sel_l2)]
-if sel_l3 and 'CAT_L3_GENERE' in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered['CAT_L3_GENERE'].isin(sel_l3)]
-if sel_l4 and 'CAT_L4_TESSUTO' in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered['CAT_L4_TESSUTO'].isin(sel_l4)]
-if sel_fornitore and 'CODICE_FOR' in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered['CODICE_FOR'].isin(sel_fornitore)]
-if sel_marca and 'CODICE_MAR' in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered['CODICE_MAR'].isin(sel_marca)]
+    if search_term.strip():
+        words = search_term.strip().split()
+        combined_text = df_filtered['DESCRIZION'].fillna('') + ' ' + df_filtered['CODICE_ART'].fillna('')
+        mask = pd.Series(True, index=df_filtered.index)
+        for word in words:
+            mask = mask & combined_text.str.contains(word, case=False, regex=False)
+        df_filtered = df_filtered[mask]
 
-# ---------------------------------------------------------
-# SELEZIONE FILIALI DA MOSTRARE
-# ---------------------------------------------------------
-filiali_scelte_keys = st.multiselect(
-    "Seleziona le Filiali da includere in tabella:",
-    options=list(MAPPA_FILIALI.keys()),
-    format_func=lambda x: MAPPA_FILIALI[x],
-    default=list(MAPPA_FILIALI.keys())
-)
+    if sel_l1 and 'CAT_L1_REPARTO' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['CAT_L1_REPARTO'].isin(sel_l1)]
+    if sel_l2 and 'CAT_L2_ARTICOLO' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['CAT_L2_ARTICOLO'].isin(sel_l2)]
+    if sel_l3 and 'CAT_L3_GENERE' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['CAT_L3_GENERE'].isin(sel_l3)]
+    if sel_l4 and 'CAT_L4_TESSUTO' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['CAT_L4_TESSUTO'].isin(sel_l4)]
+    if sel_fornitore and 'CODICE_FOR' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['CODICE_FOR'].isin(sel_fornitore)]
+    if sel_marca and 'CODICE_MAR' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['CODICE_MAR'].isin(sel_marca)]
 
-if not filiali_scelte_keys:
-    st.info("Seleziona almeno una filiale per visualizzare i dati.")
-    st.stop()
+    filiali_scelte_keys = st.multiselect(
+        "Seleziona le Filiali da includere in tabella:",
+        options=list(MAPPA_FILIALI.keys()),
+        format_func=lambda x: MAPPA_FILIALI[x],
+        default=list(MAPPA_FILIALI.keys())
+    )
 
-# Calcolo totale quantità selezionata
-df_filtered['Quantità Totale Selezionata'] = df_filtered[filiali_scelte_keys].sum(axis=1)
+    if not filiali_scelte_keys:
+        st.info("Seleziona almeno una filiale per visualizzare i dati.")
+    else:
+        df_filtered['Quantità Totale Selezionata'] = df_filtered[filiali_scelte_keys].sum(axis=1)
 
-# Preparazione colonne della tabella
-colonne_mappate = {k: MAPPA_FILIALI[k] for k in filiali_scelte_keys}
-nomi_filiali_selezionate = list(colonne_mappate.values())
+        colonne_mappate = {k: MAPPA_FILIALI[k] for k in filiali_scelte_keys}
+        nomi_filiali_selezionate = list(colonne_mappate.values())
 
-df_display = df_filtered[[
-    'CODICE_ART', 
-    'DESCRIZION', 
-    'CODICE_FOR', 
-    'CODICE_MAR'
-] + filiali_scelte_keys + ['Quantità Totale Selezionata']].copy()
+        df_display = df_filtered[[
+            'CODICE_ART', 
+            'DESCRIZION', 
+            'CODICE_FOR', 
+            'CODICE_MAR'
+        ] + filiali_scelte_keys + ['Quantità Totale Selezionata']].copy()
 
-df_display = df_display.rename(columns={
-    'CODICE_ART': 'Codice Articolo',
-    'DESCRIZION': 'Descrizione',
-    'CODICE_FOR': 'Fornitore',
-    'CODICE_MAR': 'Marca',
-    **colonne_mappate
-})
+        df_display = df_display.rename(columns={
+            'CODICE_ART': 'Codice Articolo',
+            'DESCRIZION': 'Descrizione',
+            'CODICE_FOR': 'Fornitore',
+            'CODICE_MAR': 'Marca',
+            **colonne_mappate
+        })
 
-# Impostiamo 'Codice Articolo' come indice per rimuovere i numeri di riga (0, 1, 2...)
-df_display_table = df_display.set_index('Codice Articolo')
+        df_display_table = df_display.set_index('Codice Articolo')
 
-# ---------------------------------------------------------
-# FUNZIONE STYLING / COLORAZIONE CONDIZIONALE
-# ---------------------------------------------------------
-def applica_colori_giacenza(df, colonne_numeric):
-    v_max = df[colonne_numeric].max().max() if not df.empty else 1
-    if pd.isna(v_max) or v_max <= 0:
-        v_max = 1
+        def applica_colori_giacenza(df, colonne_numeric):
+            v_max = df[colonne_numeric].max().max() if not df.empty else 1
+            if pd.isna(v_max) or v_max <= 0:
+                v_max = 1
 
-    def colora_cella(val):
-        if not isinstance(val, (int, float)) or val <= 0:
-            return ''
-        
-        ratio = 0.15 + 0.70 * (val / v_max)
-        
-        r = int(225 - (185 * ratio))
-        g = int(238 - (150 * ratio))
-        b = int(250 - (70 * ratio))
-        
-        text_color = "white" if ratio > 0.55 else "black"
-        
-        return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
-
-    return df.style.map(colora_cella, subset=colonne_numeric)
-
-# ---------------------------------------------------------
-# METRICHE E VISUALIZZAZIONE CONDIZIONATA
-# ---------------------------------------------------------
-if not ha_filtri_attivi:
-    st.info("👈 **Seleziona un filtro o digita un termine di ricerca nel menu a sinistra per visualizzare la tabella dei prodotti.**")
-else:
-    k1, k2 = st.columns(2)
-    k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
-    k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
-
-    colonne_da_colorare = nomi_filiali_selezionate
-    styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
-
-    st.dataframe(styled_df, use_container_width=True, height=550)
-
-    # ---------------------------------------------------------
-    # PULSANTI DOWNLOAD ED ESPORTAZIONE / STAMPA
-    # ---------------------------------------------------------
-    c1, c2, c3 = st.columns([1, 1, 1])
-
-    with c1:
-        csv_data = df_display.to_csv(index=False).encode('latin1')
-        st.download_button(
-            label="📥 Scarica in CSV",
-            data=csv_data,
-            file_name="Giacenze_Bianco_Market.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-
-    with c2:
-        try:
-            excel_data = convert_df_to_excel(df_display)
-            st.download_button(
-                label="📊 Scarica in Excel (.xlsx)",
-                data=excel_data,
-                file_name="Giacenze_Bianco_Market.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        except Exception:
-            # Fallback se xlsxwriter non è installato
-            st.download_button(
-                label="📊 Scarica in XLS",
-                data=csv_data,
-                file_name="Giacenze_Bianco_Market.xls",
-                mime="application/vnd.ms-excel",
-                use_container_width=True
-            )
-
-    with c3:
-        # Pulisce l'HTML per la finestra di stampa
-        clean_html_table = df_display.to_html(index=False)
-        
-        print_script = f"""
-        <style>
-            .print-btn {{
-                background-color: #ff4b4b;
-                color: white;
-                border: none;
-                padding: 9px 16px;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 8px;
-                cursor: pointer;
-                width: 100%;
-                text-align: center;
-            }}
-            .print-btn:hover {{
-                background-color: #e03e3e;
-            }}
-        </style>
-
-        <button class="print-btn" onclick="openPrintWindow()">🖨️ Stampa Tabella Complete</button>
-
-        <script>
-            function openPrintWindow() {{
-                var printWin = window.open('', '_blank', 'width=1100,height=800');
-                var tableContent = `{clean_html_table}`;
+            def colora_cella(val):
+                if not isinstance(val, (int, float)) or val <= 0:
+                    return ''
                 
-                printWin.document.write(`
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>Report Giacenze Filiali - Bianco Market</title>
-                        <style>
-                            body {{
-                                font-family: Arial, sans-serif;
-                                margin: 15px;
-                                color: #333;
-                            }}
-                            h2 {{
-                                text-align: center;
-                                margin-bottom: 15px;
-                                font-size: 18px;
-                            }}
-                            table {{
-                                width: 100%;
-                                border-collapse: collapse;
-                                font-size: 10px;
-                            }}
-                            th, td {{
-                                border: 1px solid #777;
-                                padding: 5px 6px;
-                                text-align: center;
-                            }}
-                            th {{
-                                background-color: #f2f2f2;
-                                font-weight: bold;
-                            }}
-                            tr:nth-child(even) {{
-                                background-color: #fafafa;
-                            }}
-                            @page {{
-                                size: A4 landscape;
-                                margin: 8mm;
-                            }}
-                        </style>
-                    </head>
-                    <body>
-                        <h2>Bianco Market - Report Giacenze Filiali</h2>
-                        $TABLE_PLACEHOLDER$
-                    </body>
-                    </html>
-                `.replace('$TABLE_PLACEHOLDER$', tableContent));
+                ratio = 0.15 + 0.70 * (val / v_max)
+                r = int(225 - (185 * ratio))
+                g = int(238 - (150 * ratio))
+                b = int(250 - (70 * ratio))
+                text_color = "white" if ratio > 0.55 else "black"
+                return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
 
-                printWin.document.close();
-                printWin.focus();
-                
-                setTimeout(function() {{
-                    printWin.print();
-                }}, 500);
-            }}
-        </script>
-        """
-        components.html(print_script, height=45)
+            return df.style.map(colora_cella, subset=colonne_numeric)
+
+        if not ha_filtri_attivi:
+            st.info("👈 **Seleziona un filtro o digita un termine di ricerca nel menu a sinistra per visualizzare la tabella dei prodotti.**")
+        else:
+            k1, k2 = st.columns(2)
+            k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
+            k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
+
+            colonne_da_colorare = nomi_filiali_selezionate
+            styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
+
+            st.dataframe(styled_df, use_container_width=True, height=550)
+
+            c1, c2, c3 = st.columns([1, 1, 1])
+
+            with c1:
+                csv_data = df_display.to_csv(index=False).encode('latin1')
+                st.download_button(
+                    label="📥 Scarica in CSV",
+                    data=csv_data,
+                    file_name="Giacenze_Bianco_Market.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+            with c2:
+                try:
+                    excel_data = convert_df_to_excel(df_display)
+                    st.download_button(
+                        label="📊 Scarica in Excel (.xlsx)",
+                        data=excel_data,
+                        file_name="Giacenze_Bianco_Market.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                except Exception:
+                    st.download_button(
+                        label="📊 Scarica in XLS",
+                        data=csv_data,
+                        file_name="Giacenze_Bianco_Market.xls",
+                        mime="application/vnd.ms-excel",
+                        use_container_width=True
+                    )
+
+            with c3:
+                clean_html_table = df_display.to_html(index=False)
+                print_script = f"""
+                <style>
+                    .print-btn {{
+                        background-color: #ff4b4b;
+                        color: white;
+                        border: none;
+                        padding: 9px 16px;
+                        font-size: 14px;
+                        font-weight: bold;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        width: 100%;
+                        text-align: center;
+                    }}
+                    .print-btn:hover {{
+                        background-color: #e03e3e;
+                    }}
+                </style>
+
+                <button class="print-btn" onclick="openPrintWindow()">🖨️ Stampa Tabella Completa</button>
+
+                <script>
+                    function openPrintWindow() {{
+                        var printWin = window.open('', '_blank', 'width=1100,height=800');
+                        var tableContent = `{clean_html_table}`;
+                        
+                        printWin.document.write(`
+                            <!DOCTYPE html>
+                            <html>
+                            <head>
+                                <title>Report Giacenze Filiali - Bianco Market</title>
+                                <style>
+                                    body {{
+                                        font-family: Arial, sans-serif;
+                                        margin: 15px;
+                                        color: #333;
+                                    }}
+                                    h2 {{
+                                        text-align: center;
+                                        margin-bottom: 15px;
+                                        font-size: 18px;
+                                    }}
+                                    table {{
+                                        width: 100%;
+                                        border-collapse: collapse;
+                                        font-size: 10px;
+                                    }}
+                                    th, td {{
+                                        border: 1px solid #777;
+                                        padding: 5px 6px;
+                                        text-align: center;
+                                    }}
+                                    th {{
+                                        background-color: #f2f2f2;
+                                        font-weight: bold;
+                                    }}
+                                    tr:nth-child(even) {{
+                                        background-color: #fafafa;
+                                    }}
+                                    @page {{
+                                        size: A4 landscape;
+                                        margin: 8mm;
+                                    }}
+                                </style>
+                            </head>
+                            <body>
+                                <h2>Bianco Market - Report Giacenze Filiali</h2>
+                                $TABLE_PLACEHOLDER$
+                            </body>
+                            </html>
+                        `.replace('$TABLE_PLACEHOLDER$', tableContent));
+
+                        printWin.document.close();
+                        printWin.focus();
+                        
+                        setTimeout(function() {{
+                            printWin.print();
+                        }}, 500);
+                    }}
+                </script>
+                """
+                components.html(print_script, height=45)
+
+# =========================================================
+# TAB 2: GESTIONE ORDINI & RIASSORTIMENTO
+# =========================================================
+with tab_ordini:
+    st.header("🛒 Gestione Ordini e Riassortimento Filiali")
+    st.write("Configura e genera proposte d'ordine per il riassortimento dei punti vendita.")
+
+    col_o1, col_o2 = st.columns([1, 2])
+
+    with col_o1:
+        st.subheader("Crea Nuovo Ordine")
+        destinazione = st.selectbox("Filiale Destinataria", list(MAPPA_FILIALI.values()))
+        fornitore_ord = st.selectbox("Fornitore Riferimento", fornitori if fornitori else ["Tutti"])
+        soglia_min = st.number_input("Soglia Minima Giacenza (Alert)", min_value=0, value=2)
+        
+        st.text_area("Note Ordine / Istruzioni Consegna", "", placeholder="Inserisci eventuali indicazioni...")
+
+    with col_o2:
+        st.subheader("Proposta Articoli Sotto Soglia")
+        
+        # Filtra articoli in esaurimento per la filiale indicata
+        col_filiale_key = [k for k, v in MAPPA_FILIALI.items() if v == destinazione]
+        if col_filiale_key:
+            f_key = col_filiale_key[0]
+            df_sotto_scorta = df_master[df_master[f_key].astype(int) <= soglia_min][
+                ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', f_key]
+            ].copy()
+            df_sotto_scorta.columns = ['Codice ART', 'Descrizione', 'Fornitore', 'Giacenza Attuale']
+            
+            if fornitore_ord != "Tutti":
+                df_sotto_scorta = df_sotto_scorta[df_sotto_scorta['Fornitore'] == fornitore_ord]
+            
+            st.metric("Articoli da Riassortire", f"{len(df_sotto_scorta)}")
+            st.dataframe(df_sotto_scorta, use_container_width=True, height=300)
+
+            if not df_sotto_scorta.empty:
+                csv_ord = df_sotto_scorta.to_csv(index=False).encode('latin1')
+                st.download_button(
+                    label=f"📄 Genera e Scarica Bozza Ordine ({destinazione})",
+                    data=csv_ord,
+                    file_name=f"Ordine_Riassortimento_{destinazione}.csv",
+                    mime="text/csv"
+                )
+
+# =========================================================
+# TAB 3: STATISTICHE & PERFORMANCE
+# =========================================================
+with tab_statistiche:
+    st.header("📊 Statistiche Giacenze & Distribuzione Filiali")
+    
+    st_c1, st_c2 = st.columns(2)
+
+    with st_c1:
+        st.subheader("Totale Pezzi per Filiale")
+        totali_filiali = df_master[list(MAPPA_FILIALI.keys())].sum().reset_index()
+        totali_filiali.columns = ['Codice', 'Quantità Totale']
+        totali_filiali['Filiale'] = totali_filiali['Codice'].map(MAPPA_FILIALI)
+        
+        st.bar_chart(totali_filiali.set_index('Filiale')['Quantità Totale'])
+
+    with st_c2:
+        st.subheader("Distribuzione Top 10 Reparti (L1)")
+        if 'CAT_L1_REPARTO' in df_master.columns:
+            tot_reparti = df_master.groupby('CAT_L1_REPARTO')[list(MAPPA_FILIALI.keys())].sum().sum(axis=1)
+            top10_reparti = tot_reparti.sort_values(ascending=False).head(10)
+            st.bar_chart(top10_reparti)
