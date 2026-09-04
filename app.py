@@ -10,21 +10,42 @@ st.set_page_config(
     layout="wide"
 )
 
-# CSS Personalizzato per ottimizzare la Stampa
+# ---------------------------------------------------------
+# CSS PERSONALIZZATO PER LA STAMPA INTEGRALE
+# ---------------------------------------------------------
 st.markdown("""
     <style>
     @media print {
-        /* Nasconde la sidebar e i pulsanti quando si stampa */
+        /* Nasconde elementi di interfaccia inutili in stampa */
         section[data-testid="stSidebar"], 
         .stButton, 
         .stDownloadButton, 
+        iframe,
         footer, 
         header {
             display: none !important;
         }
+        
+        /* Rimuove i margini della pagina di Streamlit */
         .main .block-container {
             padding: 0 !important;
             margin: 0 !important;
+            max-width: 100% !important;
+        }
+
+        /* Forza il contenitore della tabella ad espandersi interamente senza scrollbar */
+        [data-testid="stDataFrame"], 
+        [data-testid="stTable"], 
+        div[data-baseweb="data-table"],
+        div[role="grid"] {
+            overflow: visible !important;
+            height: auto !important;
+            max-height: none !important;
+        }
+
+        /* Evita che la tabella si spezzi in modo anomalo tra le pagine */
+        tr {
+            page-break-inside: avoid !important;
         }
     }
     </style>
@@ -277,7 +298,7 @@ k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Seleziona
 # Colonne numeriche da colorare
 styled_df = applica_colori_giacenza(df_display, nomi_filiali_selezionate)
 
-# Visualizzazione dataframe SENZA l'indice numerico di riga
+# Visualizzazione dataframe
 st.dataframe(
     styled_df, 
     use_container_width=True, 
@@ -300,7 +321,6 @@ with col_btn1:
     )
 
 with col_btn2:
-    # Tasto per la Stampa Rapida basato su JavaScript
     st.components.v1.html(
         """
         <button onclick="window.parent.print()" style="
