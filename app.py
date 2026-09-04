@@ -113,23 +113,24 @@ def find_all_stor_car_files(base_dir="data"):
 # FUNZIONE LETTURA ROBUSTA PER CSV
 # ---------------------------------------------------------
 def safe_read_csv(path):
-    """Prova in sequenza i separatori più comuni evitando l'errore del csv.Sniffer()"""
+    """Prova in sequenza le codifiche ed i separatori più comuni evitando blocchi"""
     if not path or not os.path.exists(path):
         return pd.DataFrame()
 
-    for sep in [';', ',', '\t', '|']:
-        try:
-            df = pd.read_csv(
-                path, 
-                encoding='latin1', 
-                sep=sep, 
-                on_bad_lines='skip', 
-                dtype=str
-            )
-            if len(df.columns) > 1:
-                return df
-        except Exception:
-            continue
+    for encoding in ['latin1', 'utf-8-sig', 'utf-8', 'cp1252']:
+        for sep in [';', ',', '\t', '|']:
+            try:
+                df = pd.read_csv(
+                    path, 
+                    encoding=encoding, 
+                    sep=sep, 
+                    on_bad_lines='skip', 
+                    dtype=str
+                )
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
 
     try:
         return pd.read_csv(path, encoding='latin1', on_bad_lines='skip', dtype=str)
@@ -371,7 +372,8 @@ with tab_giacenze:
             c1, c2 = st.columns(2)
 
             with c1:
-                csv_data = df_display.to_csv(index=False).encode('latin1')
+                # ✅ FIX ENCODING UTF-8-SIG PER EVITARE UNICODEERROR
+                csv_data = df_display.to_csv(index=False, sep=';').encode('utf-8-sig')
                 st.download_button("📥 Scarica in CSV", csv_data, "Giacenze_Bianco_Market.csv", "text/csv", use_container_width=True)
 
             with c2:
@@ -384,7 +386,6 @@ with tab_giacenze:
 with tab_ordini:
     st.header("🛒 Gestione Ordini & Reintegro da STOR_CAR Multianno")
     
-    # Visualizzazione dei file caricati da data/
     if not file_caricati:
         st.warning("⚠️ **Nessun file STOR_CAR trovato nella cartella `data/` o nelle sottocartelle degli anni.**")
     else:
@@ -393,7 +394,6 @@ with tab_ordini:
             for f in file_caricati:
                 st.write(f"- `{f}`")
 
-    # Uploader opzionale integrato
     uploaded_file = st.file_uploader("📥 Oppure carica un ulteriore file STOR_CAR / Vendite (CSV)", type=['csv'])
     if uploaded_file is not None:
         df_u = safe_read_csv(uploaded_file)
@@ -464,7 +464,6 @@ with tab_ordini:
     else:
         df_ord_filtered['Giacenza Attuale (Pz)'] = df_ord_filtered[filiali_ord_keys].sum(axis=1)
 
-        # Calcolo del Venduto Automatico Multianno
         if not df_stor.empty and 'CODICE_ART' in df_stor.columns:
             df_v_periodo = df_stor.copy()
             
@@ -473,7 +472,6 @@ with tab_ordini:
                 mask_date = (df_v_periodo['DATA'].dt.date >= d_start) & (df_v_periodo['DATA'].dt.date <= d_end)
                 df_v_periodo = df_v_periodo[mask_date]
 
-            # Aggregazione e Somma automatica delle battute per Codice Articolo
             venduto_per_art = df_v_periodo.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
             venduto_per_art.columns = ['CODICE_ART', 'Totale Battute/Venduto (Pz)']
             
@@ -521,7 +519,8 @@ with tab_ordini:
 
             o_col1, o_col2 = st.columns(2)
             with o_col1:
-                csv_ord = df_ord_display.to_csv(index=False).encode('latin1')
+                # ✅ FIX ENCODING UTF-8-SIG PER EVITARE UNICODEERROR SULL'EMOJI ⚡
+                csv_ord = df_ord_display.to_csv(index=False, sep=';').encode('utf-8-sig')
                 st.download_button(
                     "📥 Scarica Ordine Reintegro (CSV)", 
                     csv_ord, 
