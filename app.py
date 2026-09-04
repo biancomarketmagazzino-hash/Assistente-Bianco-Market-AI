@@ -1,6 +1,6 @@
 import os
 import io
-import glob
+import datetime
 import pandas as pd
 import streamlit as st
 
@@ -8,8 +8,9 @@ import streamlit as st
 # CONFIGURAZIONE PAGINA STREAMLIT
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Bianco Market - Assistant & Inventory AI",
-    layout="wide"
+    page_title="Bianco Market - ERP Giacenze, Vendite e Reintegri",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # ---------------------------------------------------------
@@ -81,19 +82,17 @@ CATEGORIE_L4 = [
 ]
 
 # ---------------------------------------------------------
-# UTILITY CLEANING & PARSING DATE
+# FUNZIONI DI UTILITÀ E PARSING DATE
 # ---------------------------------------------------------
 def clean_code(series):
-    """Pulisce i codici articolo rimuovendo spazi bianchi extra e uniformando in maiuscolo"""
     return series.astype(str).str.strip().str.upper()
 
-def parse_dates_robust(series):
-    """Converte le date provando prima il formato italiano (DD/MM/YYYY) e poi l'ISO"""
-    parsed = pd.to_datetime(series, format='%d/%m/%Y', errors='coerce')
-    mask_nat = parsed.isna()
-    if mask_nat.any():
-        parsed[mask_nat] = pd.to_datetime(series[mask_nat], errors='coerce', dayfirst=True)
-    return parsed
+def parse_date_it(series):
+    """
+    Forza il parsing rigoroso del formato italiano GG/MM/AAAA.
+    L'opzione dayfirst=True evita lo scambio tra mese e giorno.
+    """
+    return pd.to_datetime(series, format='%d/%m/%Y', errors='coerce', dayfirst=True)
 
 def find_file(filename, base_dir="data"):
     search_dirs = [base_dir, "data/current", "."]
@@ -137,7 +136,7 @@ def safe_read_csv(path):
         return pd.DataFrame()
 
 # ---------------------------------------------------------
-# CARICAMENTO DATI CACHED
+# CARICAMENTO DATI
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_articoli():
@@ -174,8 +173,8 @@ def load_giacenze():
     if 'CODICE_ART' in df.columns:
         df['CODICE_ART'] = clean_code(df['CODICE_ART'])
         
-    num_cols = [c for c in df.columns if c != 'CODICE_ART']
-    for col in num_cols:
+    cols_filiali = [c for c in df.columns if c in MAPPA_FILIALI.keys()]
+    for col in cols_filiali:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
         
     return df
@@ -200,6 +199,7 @@ def load_stor_car_multianno():
         col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART', 'CODICE ARTICOLO'] if c in df_temp.columns), None)
         col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'BATTUTE', 'QT_CAR', 'QTA_MOV'] if c in df_temp.columns), None)
         col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_temp.columns), None)
+        col_pv = next((c for c in ['CODICE_PV', 'PV', 'PUNTO_VENDITA', 'FILIALE', 'COD_FILIALE'] if c in df_temp.columns), None)
 
         if col_art:
             df_temp['CODICE_ART'] = clean_code(df_temp[col_art])
@@ -212,11 +212,16 @@ def load_stor_car_multianno():
             df_temp['QUANTITA'] = 1
 
         if col_data:
-            df_temp['DATA_PARSED'] = parse_dates_robust(df_temp[col_data])
+            df_temp['DATA_PARSED'] = parse_date_it(df_temp[col_data])
         else:
             df_temp['DATA_PARSED'] = pd.NaT
 
-        dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED']])
+        if col_pv:
+            df_temp['CODICE_PV'] = df_temp[col_pv].astype(str).str.strip()
+        else:
+            df_temp['CODICE_PV'] = 'TUTTI'
+
+        dfs.append(df_temp[['CODICE_ART', 'QUANTITA', 'DATA_PARSED', 'CODICE_PV']])
         loaded_paths.append(path)
 
     if not dfs:
@@ -232,16 +237,16 @@ def convert_df_to_excel(df, sheet_name='Data'):
     return output.getvalue()
 
 # ---------------------------------------------------------
-# INIZIALIZZAZIONE APPLICAZIONE
+# INIZIALIZZAZIONE DATI MASTER
 # ---------------------------------------------------------
-st.title("🛍️ Bianco Market - Gestione Esistenze & Ordini 2026")
+st.title("🛍️ Bianco Market - Sistema Integrato Giacenze e Vendite")
 
 df_art = load_articoli()
 df_giac = load_giacenze()
 df_stor, file_caricati = load_stor_car_multianno()
 
 if df_art.empty or df_giac.empty:
-    st.warning("⚠️ Impossibile caricare `ARTICOLI.csv` o `Sit_filiali.csv`. Verificare la presenza dei file nella cartella `data/`.")
+    st.error("❌ Impossibile caricare i file 'ARTICOLI.csv' o 'Sit_filiali.csv'. Assicurarsi che siano presenti nella directory del progetto.")
     st.stop()
 
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
@@ -270,23 +275,27 @@ def applica_filtri_catalogo(df, search, l1, l2, l3, l4, forn, marca):
         df_f = df_f[df_f['CODICE_MAR'].isin(marca)]
     return df_f
 
-tab_giacenze, tab_ordini, tab_statistiche = st.tabs([
+# ---------------------------------------------------------
+# STRUTTURA A SCHEDE (TABS)
+# ---------------------------------------------------------
+tab_giacenze, tab_ordini, tab_dettaglio_pv, tab_diagnostica = st.tabs([
     "📦 Giacenze & Catalogo", 
-    "🛒 Gestione Ordini & Reintegro 2026", 
-    "📊 Statistiche & Performance"
+    "🛒 Gestione Ordini & Reintegri", 
+    "🏬 Analisi Venduto per Singola Filiale",
+    "🔧 Diagnostica Dati"
 ])
 
 # =========================================================
-# TAB 1: GIACENZE E CATALOGO
+# TAB 1: GIACENZE E CATALOGO COMPLETO
 # =========================================================
 with tab_giacenze:
-    st.sidebar.header("🔍 Filtri Catalogo")
+    st.sidebar.header("🔍 Filtri Generali Catalogo")
 
-    search_term = st.sidebar.text_input("🔎 Ricerca Descrizione / Codice ART", "", placeholder="Es: STROFINACCI", key="g_search")
-    sel_l1 = st.sidebar.multiselect("Livello 1: Reparto", CATEGORIE_L1, key="g_l1")
-    sel_l2 = st.sidebar.multiselect("Livello 2: Tipologia Articolo", CATEGORIE_L2, key="g_l2")
-    sel_l3 = st.sidebar.multiselect("Livello 3: Genere / Misura", CATEGORIE_L3, key="g_l3")
-    sel_l4 = st.sidebar.multiselect("Livello 4: Materiale / Tessuto", CATEGORIE_L4, key="g_l4")
+    search_term = st.sidebar.text_input("🔎 Ricerca Descrizione / Codice", "", key="g_search")
+    sel_l1 = st.sidebar.multiselect("Reparto (L1)", CATEGORIE_L1, key="g_l1")
+    sel_l2 = st.sidebar.multiselect("Tipologia (L2)", CATEGORIE_L2, key="g_l2")
+    sel_l3 = st.sidebar.multiselect("Genere/Misura (L3)", CATEGORIE_L3, key="g_l3")
+    sel_l4 = st.sidebar.multiselect("Materiale/Tessuto (L4)", CATEGORIE_L4, key="g_l4")
 
     fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f != '-']) if 'CODICE_FOR' in df_master.columns else []
     sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori, key="g_forn")
@@ -294,251 +303,170 @@ with tab_giacenze:
     marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m != '-']) if 'CODICE_MAR' in df_master.columns else []
     sel_marca = st.sidebar.multiselect("Marca", marche, key="g_marca")
 
-    ha_filtri_attivi = bool(search_term.strip() or sel_l1 or sel_l2 or sel_l3 or sel_l4 or sel_fornitore or sel_marca)
     df_filtered = applica_filtri_catalogo(df_master, search_term, sel_l1, sel_l2, sel_l3, sel_l4, sel_fornitore, sel_marca)
 
     filiali_scelte_keys = st.multiselect(
-        "Seleziona le Filiali da includere in tabella:",
+        "Seleziona le Filiali da sommare per la Giacenza Totale:",
         options=list(MAPPA_FILIALI.keys()),
-        format_func=lambda x: MAPPA_FILIALI[x],
+        format_func=lambda x: f"{x} - {MAPPA_FILIALI[x]}",
         default=list(MAPPA_FILIALI.keys()),
         key="g_filiali"
     )
 
-    if not filiali_scelte_keys:
-        st.info("Seleziona almeno una filiale per visualizzare i dati.")
-    else:
-        df_filtered['Quantità Totale Selezionata'] = df_filtered[filiali_scelte_keys].sum(axis=1)
-        df_filtered = df_filtered[df_filtered['Quantità Totale Selezionata'] > 0]
-
+    if filiali_scelte_keys:
+        df_filtered['Giacenza Totale (Pz)'] = df_filtered[filiali_scelte_keys].sum(axis=1)
         colonne_mappate = {k: MAPPA_FILIALI[k] for k in filiali_scelte_keys}
-        nomi_filiali_selezionate = list(colonne_mappate.values())
-
-        df_display = df_filtered[[
-            'CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR'
-        ] + filiali_scelte_keys + ['Quantità Totale Selezionata']].copy()
-
-        df_display = df_display.rename(columns={
-            'CODICE_ART': 'Codice Articolo',
-            'DESCRIZION': 'Descrizione',
-            'CODICE_FOR': 'Fornitore',
-            'CODICE_MAR': 'Marca',
-            **colonne_mappate
-        })
-
-        df_display_table = df_display.set_index('Codice Articolo')
-
-        def get_cell_color_styles(val, v_max):
-            if not isinstance(val, (int, float)) or val <= 0 or pd.isna(val):
-                return "", ""
-            ratio = 0.15 + 0.70 * (val / v_max)
-            r = int(225 - (185 * ratio))
-            g = int(238 - (150 * ratio))
-            b = int(250 - (70 * ratio))
-            text_color = "white" if ratio > 0.55 else "black"
-            return f"rgb({r}, {g}, {b})", text_color
-
-        def applica_colori_giacenza(df, colonne_numeric):
-            v_max = df[colonne_numeric].max().max() if not df.empty else 1
-            if pd.isna(v_max) or v_max <= 0:
-                v_max = 1
-
-            def colora_cella(val):
-                bg_color, text_color = get_cell_color_styles(val, v_max)
-                if not bg_color:
-                    return ''
-                return f'background-color: {bg_color}; color: {text_color}; font-weight: bold;'
-
-            return df.style.map(colora_cella, subset=colonne_numeric)
-
-        if not ha_filtri_attivi:
-            st.info("👈 **Seleziona un filtro o digita un termine di ricerca nel menu a sinistra per visualizzare la tabella dei prodotti.**")
-        elif df_display.empty:
-            st.warning("⚠️ Nessun articolo trovato con giacenza maggiore di 0 per i filtri selezionati.")
-        else:
-            k1, k2 = st.columns(2)
-            k1.metric("Totale Articoli Trovati (Giacenza > 0)", f"{len(df_display):,}")
-            k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
-
-            colonne_da_colorare = nomi_filiali_selezionate
-            styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
-
-            st.dataframe(styled_df, width="stretch", height=550)
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                csv_data = df_display.to_csv(index=False, sep=';').encode('utf-8-sig')
-                st.download_button("📥 Scarica in CSV", csv_data, "Giacenze_Bianco_Market.csv", "text/csv", width="stretch")
-
-            with c2:
-                excel_data = convert_df_to_excel(df_display, sheet_name='Giacenze')
-                st.download_button("📊 Scarica in Excel (.xlsx)", excel_data, "Giacenze_Bianco_Market.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+        
+        cols_display = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR'] + filiali_scelte_keys + ['Giacenza Totale (Pz)']
+        df_display = df_filtered[cols_display].copy()
+        df_display = df_display.rename(columns={'CODICE_ART': 'Codice Articolo', 'DESCRIZION': 'Descrizione', 'CODICE_FOR': 'Fornitore', 'CODICE_MAR': 'Marca', **colonne_mappate})
+        
+        st.dataframe(df_display.set_index('Codice Articolo'), width="stretch", height=550)
 
 # =========================================================
-# TAB 2: GESTIONE ORDINI & REINTEGRO 2026
+# TAB 2: GESTIONE ORDINI, VENDITE E REINTEGRI
 # =========================================================
 with tab_ordini:
-    st.header("🛒 Gestione Ordini & Reintegro (Calcolo su Ultimi 3 Mesi del 2026)")
-    
-    if not file_caricati:
-        st.warning("⚠️ **Nessun file STOR_CAR trovato nella cartella `data/`.**")
-    else:
-        st.success(f"✅ **Caricati {len(file_caricati)} file STOR_CAR ({len(df_stor):,} righe movimenti storici totali):**")
-        with st.expander("📁 Elenco dei file scaricati"):
-            for f in file_caricati:
-                st.write(f"- `{f}`")
+    st.header("🛒 Calcolo Vendite Periodiche e Suggerimento Reintegro")
 
-    uploaded_file = st.file_uploader("📥 Carica un ulteriore file STOR_CAR / Vendite (CSV)", type=['csv'])
-    if uploaded_file is not None:
-        df_u = safe_read_csv(uploaded_file)
-        if not df_u.empty:
-            cols_upper = {c: str(c).upper().strip() for c in df_u.columns}
-            df_u = df_u.rename(columns=cols_upper)
-            col_art = next((c for c in ['CODICE_ART', 'CODICE', 'ARTICOLO', 'COD_ART', 'CODICE ARTICOLO'] if c in df_u.columns), None)
-            col_qta = next((c for c in ['QUANTITA', 'QTA', 'PEZZI', 'PZ_VENDUTI', 'VENDUTO', 'BATTUTE', 'QT_CAR', 'QTA_MOV'] if c in df_u.columns), None)
-            col_data = next((c for c in ['DATA', 'DATA_VENDITA', 'DATAVENDITA', 'DATA_MOV'] if c in df_u.columns), None)
-
-            df_u['CODICE_ART'] = clean_code(df_u[col_art]) if col_art else clean_code(df_u.iloc[:, 0])
-            df_u['QUANTITA'] = pd.to_numeric(df_u[col_qta], errors='coerce').fillna(0).abs().astype(int) if col_qta else 1
-            df_u['DATA_PARSED'] = parse_dates_robust(df_u[col_data]) if col_data else pd.NaT
-
-            df_stor = pd.concat([df_stor, df_u[['CODICE_ART', 'QUANTITA', 'DATA_PARSED']]], ignore_index=True)
-            st.info(f"File manuale caricato. Righe totali movimenti: {len(df_stor):,}")
-
-    with st.form(key="form_ordini"):
-        st.subheader("🔍 Filtri Selezione e Date Movimenti")
+    with st.form(key="form_ordini_main"):
+        st.subheader("📅 Intervallo Temporale Analizzato (Formato GG/MM/AAAA)")
         
-        c_top1, c_top2, c_top3 = st.columns([1.5, 1.5, 1])
-        with c_top1:
-            # Impostazione predefinita sugli ultimi 3 mesi del 2026 (es: dal 01/06/2026 al 30/09/2026)
-            date_range = st.date_input(
-                "📅 Intervallo Date Movimenti (Default 2026):",
-                value=(pd.to_datetime("2026-06-01").date(), pd.to_datetime("2026-09-30").date()),
-                key="o_date_range"
-            )
-        with c_top2:
-            filiali_ord_keys = st.multiselect(
-                "Filiali di riferimento Giacenza:",
-                options=list(MAPPA_FILIALI.keys()),
-                format_func=lambda x: MAPPA_FILIALI[x],
-                default=list(MAPPA_FILIALI.keys()),
-                key="o_filiali"
-            )
-        with c_top3:
-            solo_venduto = st.checkbox("Mostra SOLO articoli movimentati (>0 battute)", value=False)
+        c1, c2, c3 = st.columns([1.5, 1.5, 1])
+        with c1:
+            data_inizio = st.date_input("Data Inizio Inclusa:", datetime.date(2026, 6, 1), format="DD/MM/YYYY")
+        with c2:
+            data_fine = st.date_input("Data Fine Inclusa:", datetime.date(2026, 9, 4), format="DD/MM/YYYY")
+        with c3:
+            solo_venduti = st.checkbox("Mostra solo articoli venduti (>0)", value=False)
 
-        oc1, oc2, oc3, oc4 = st.columns(4)
-        with oc1:
-            o_search = st.text_input("🔎 Cerca Descrizione / Codice", "", key="o_search")
-        with oc2:
-            o_l1 = st.multiselect("Reparto (L1)", CATEGORIE_L1, key="o_l1")
-        with oc3:
-            o_forn = st.multiselect("Fornitore", fornitori, key="o_forn")
-        with oc4:
-            o_marca = st.multiselect("Marca", marche, key="o_marca")
+        st.subheader("⚙️ Parametri Proposta Ordine / Reintegro")
+        p1, p2 = st.columns(2)
+        with p1:
+            scorta_minima = st.number_input("Scorta Minima Desiderata per Articolo (Tutti i PV):", min_value=0, value=2)
+        with p2:
+            moltiplicatore_reintegro = st.number_input("Coefficiente di Reintegro sul Venduto:", min_value=0.0, value=1.0, step=0.1)
 
-        with st.expander("Filtri Avanzati Catalogo (Tipologia L2, Genere L3, Tessuto L4)"):
-            ex1, ex2, ex3 = st.columns(3)
-            with ex1:
-                o_l2 = st.multiselect("Tipologia (L2)", CATEGORIE_L2, key="o_l2")
-            with ex2:
-                o_l3 = st.multiselect("Genere/Misura (L3)", CATEGORIE_L3, key="o_l3")
-            with ex3:
-                o_l4 = st.multiselect("Tessuto/Materiale (L4)", CATEGORIE_L4, key="o_l4")
+        o_search = st.text_input("🔎 Ricerca mirata per il calcolo (Codice es. 8000842782685 o Descrizione):", "", key="o_search")
+        btn_calcola = st.form_submit_button("🔥 ESEGUI CALCOLO VENDITE E REINTEGRO", width="stretch")
 
-        btn_cerca = st.form_submit_button("🔍 ESEGUI CALCOLO VENDUTO 2026 / AGGIORNA TABELLA", width="stretch")
+    df_ord_base = applica_filtri_catalogo(df_master, o_search, sel_l1, sel_l2, sel_l3, sel_l4, sel_fornitore, sel_marca)
 
-    df_ord_filtered = applica_filtri_catalogo(df_master, o_search, o_l1, o_l2, o_l3, o_l4, o_forn, o_marca)
+    # Giacenza totale sommata su tutti e 10 i punti vendita
+    tutte_filiali = list(MAPPA_FILIALI.keys())
+    df_ord_base['Giacenza Totale (Punti Vendita)'] = df_ord_base[tutte_filiali].sum(axis=1)
 
-    if not filiali_ord_keys:
-        st.warning("Seleziona almeno una filiale per la giacenza attuale.")
+    # Filtraggio del venduto storico nel periodo
+    if not df_stor.empty and data_inizio and data_fine:
+        d_start = pd.to_datetime(data_inizio)
+        d_end = pd.to_datetime(data_fine)
+
+        mask_periodo = (df_stor['DATA_PARSED'].notna()) & (df_stor['DATA_PARSED'] >= d_start) & (df_stor['DATA_PARSED'] <= d_end)
+        df_venduto_filtrato = df_stor[mask_periodo]
+
+        # Aggregazione del venduto per codice articolo
+        venduto_agg = df_venduto_filtrato.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
+        venduto_agg.columns = ['CODICE_ART', 'Venduto nel Periodo (Pz)']
+
+        df_ord_base = pd.merge(df_ord_base, venduto_agg, on='CODICE_ART', how='left')
+        df_ord_base['Venduto nel Periodo (Pz)'] = df_ord_base['Venduto nel Periodo (Pz)'].fillna(0).astype(int)
     else:
-        df_ord_filtered['Giacenza Attuale (Pz)'] = df_ord_filtered[filiali_ord_keys].sum(axis=1)
+        df_ord_base['Venduto nel Periodo (Pz)'] = 0
 
-        # AGGREGAZIONE MOVIMENTI RIGIDA SU INTERVALLO DATE
-        if not df_stor.empty and len(date_range) == 2:
-            d_start = pd.to_datetime(date_range[0])
-            d_end = pd.to_datetime(date_range[1])
+    # Calcolo della proposta di riordino
+    # Formula: Max(0, (Venduto * Coeff) + Scorta Minima - Giacenza Attuale)
+    df_ord_base['Fabbisogno Teorico'] = (df_ord_base['Venduto nel Periodo (Pz)'] * moltiplicatore_reintegro) + scorta_minima
+    df_ord_base['Proposta Ordine (Pz)'] = df_ord_base['Fabbisogno Teorico'] - df_ord_base['Giacenza Totale (Punti Vendita)']
+    df_ord_base['Proposta Ordine (Pz)'] = df_ord_base['Proposta Ordine (Pz)'].apply(lambda x: max(0, int(round(x))))
 
-            # Considera esclusivamente le righe aventi una data valida compresa nell'intervallo
-            mask_periodo = (df_stor['DATA_PARSED'].notna()) & (df_stor['DATA_PARSED'] >= d_start) & (df_stor['DATA_PARSED'] <= d_end)
-            df_v_filtrato = df_stor[mask_periodo]
+    if solo_venduti:
+        df_ord_base = df_ord_base[df_ord_base['Venduto nel Periodo (Pz)'] > 0]
 
-            sales_sum = df_v_filtrato.groupby('CODICE_ART')['QUANTITA'].sum().reset_index()
-            sales_sum.columns = ['CODICE_ART', 'Totale Battute/Venduto (Pz)']
+    df_risultato = df_ord_base[[
+        'CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 
+        'Giacenza Totale (Punti Vendita)', 'Venduto nel Periodo (Pz)', 'Proposta Ordine (Pz)'
+    ]].copy()
 
-            df_ord_filtered = pd.merge(df_ord_filtered, sales_sum, on='CODICE_ART', how='left')
-            df_ord_filtered['Totale Battute/Venduto (Pz)'] = df_ord_filtered['Totale Battute/Venduto (Pz)'].fillna(0).astype(int)
-        else:
-            df_ord_filtered['Totale Battute/Venduto (Pz)'] = 0
+    df_risultato.columns = [
+        'Codice Articolo', 'Descrizione', 'Fornitore', 'Marca', 
+        'Giacenza Totale (Tutti i PV)', 'Quantità Venduta (Periodo)', 'Proposta Reintegro (Pz)'
+    ]
 
-        df_ord_filtered['Quantità da Ordinare (Pz)'] = df_ord_filtered['Totale Battute/Venduto (Pz)']
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Totale Giacenza Rilevata", f"{df_risultato['Giacenza Totale (Tutti i PV)'].sum():,} pz")
+    m2.metric("Totale Venduto Nel Periodo", f"{df_risultato['Quantità Venduta (Periodo)'].sum():,} pz")
+    m3.metric("Totale Pezzi da Riordinare", f"{df_risultato['Proposta Reintegro (Pz)'].sum():,} pz")
 
-        def calcola_stato(row):
-            giac = row['Giacenza Attuale (Pz)']
-            vend = row['Totale Battute/Venduto (Pz)']
-            if giac == 0 and vend > 0:
-                return "⚠️ ESAURITO (Giacenza 0)"
-            elif giac < 3 and vend > 0:
-                return "⚡ SCORTA CRITICA (<3 pz)"
-            elif vend > 0:
-                return "OK - In Reintegro"
-            else:
-                return "Nessun Movimento"
+    st.dataframe(df_risultato.set_index('Codice Articolo'), width="stretch", height=500)
 
-        df_ord_filtered['Stato Giacenza'] = df_ord_filtered.apply(calcola_stato, axis=1)
-
-        if solo_venduto:
-            df_ord_filtered = df_ord_filtered[df_ord_filtered['Totale Battute/Venduto (Pz)'] > 0]
-
-        df_ord_display = df_ord_filtered[[
-            'CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 
-            'Giacenza Attuale (Pz)', 'Totale Battute/Venduto (Pz)', 'Quantità da Ordinare (Pz)', 'Stato Giacenza'
-        ]].copy()
-
-        df_ord_display.columns = [
-            'Codice Articolo', 'Descrizione', 'Fornitore', 'Marca', 
-            'Giacenza Attuale (Pz)', 'Totale Battute/Venduto (Pz)', 'Quantità da Ordinare (Pz)', 'Stato Giacenza'
-        ]
-
-        if df_ord_display.empty:
-            st.warning("⚠️ Nessun articolo trovato con i filtri impostati.")
-        else:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Totale Articoli in Elenco", f"{len(df_ord_display):,}")
-            m2.metric("Totale Battute Periodo (2026)", f"{df_ord_display['Totale Battute/Venduto (Pz)'].sum():,} pz")
-            m3.metric("TOTALE PROPOSTA ORDINE", f"{df_ord_display['Quantità da Ordinare (Pz)'].sum():,} pz")
-
-            st.dataframe(df_ord_display.set_index('Codice Articolo'), width="stretch", height=480)
-
-            o_col1, o_col2 = st.columns(2)
-            with o_col1:
-                csv_ord = df_ord_display.to_csv(index=False, sep=';').encode('utf-8-sig')
-                st.download_button("📥 Scarica Ordine Reintegro (CSV)", csv_ord, "Ordine_Reintegro_STOR_CAR_2026.csv", "text/csv", width="stretch")
-            with o_col2:
-                excel_ord = convert_df_to_excel(df_ord_display, sheet_name='Proposta Ordine')
-                st.download_button("📊 Scarica Ordine Reintegro (Excel .xlsx)", excel_ord, "Ordine_Reintegro_STOR_CAR_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+    exp_c1, exp_c2 = st.columns(2)
+    with exp_c1:
+        csv_data = df_risultato.to_csv(index=False, sep=';').encode('utf-8-sig')
+        st.download_button("📥 Esporta Report CSV", csv_data, "Report_Reintegro_BiancoMarket.csv", "text/csv", width="stretch")
+    with exp_c2:
+        excel_data = convert_df_to_excel(df_risultato, sheet_name='Proposta Ordine')
+        st.download_button("📊 Esporta Report Excel", excel_data, "Report_Reintegro_BiancoMarket.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
 
 # =========================================================
-# TAB 3: STATISTICHE & PERFORMANCE
+# TAB 3: DETTAGLIO VENDUTO PER SINGOLA FILIALE
 # =========================================================
-with tab_statistiche:
-    st.header("📊 Statistiche Giacenze & Distribuzione Filiali")
+with tab_dettaglio_pv:
+    st.header("🏬 Dettaglio Vendite e Giacenze Distribuite per Punto Vendita")
+
+    art_ricercato = st.text_input("Ingressa il Codice Articolo da analizzare nel dettaglio (es. 8000842782685):", "8000842782685")
+
+    if art_ricercato.strip():
+        cod_clean = art_ricercato.strip().upper()
+        row_art = df_master[df_master['CODICE_ART'] == cod_clean]
+
+        if not row_art.empty:
+            info = row_art.iloc[0]
+            st.success(f"**Articolo trovato:** {info['CODICE_ART']} - {info.get('DESCRIZION', '')} | Marca: {info.get('CODICE_MAR', '-')} | Fornitore: {info.get('CODICE_FOR', '-')}")
+
+            # Ripartizione giacenza per filiale
+            giacenze_pv = []
+            for k, v in MAPPA_FILIALI.items():
+                val = pd.to_numeric(info.get(k, 0), errors='coerce')
+                giacenze_pv.append({'Codice PV': k, 'Punto Vendita': v, 'Giacenza Attuale (Pz)': int(val) if pd.notna(val) else 0})
+
+            df_pv_giac = pd.DataFrame(giacenze_pv)
+
+            # Ripartizione venduto per filiale se presente la colonna CODICE_PV
+            if not df_stor.empty and 'CODICE_PV' in df_stor.columns:
+                mask_art = df_stor['CODICE_ART'] == cod_clean
+                mask_dates = (df_stor['DATA_PARSED'] >= pd.to_datetime(data_inizio)) & (df_stor['DATA_PARSED'] <= pd.to_datetime(data_fine))
+                df_stor_art = df_stor[mask_art & mask_dates]
+
+                venduto_pv = df_stor_art.groupby('CODICE_PV')['QUANTITA'].sum().reset_index()
+                venduto_pv.columns = ['Codice PV', 'Venduto nel Periodo (Pz)']
+
+                df_pv_giac = pd.merge(df_pv_giac, venduto_pv, on='Codice PV', how='left')
+                df_pv_giac['Venduto nel Periodo (Pz)'] = df_pv_giac['Venduto nel Periodo (Pz)'].fillna(0).astype(int)
+
+            st.table(df_pv_giac.set_index('Codice PV'))
+        else:
+            st.warning(f"⚠️ Nessun articolo trovato con codice {cod_clean}.")
+
+# =========================================================
+# TAB 4: DIAGNOSTICA DATI E VERIFICA FILE
+# =========================================================
+with tab_diagnostica:
+    st.header("🔧 Diagnostica e Verifica Parsing Date")
     
-    st_c1, st_c2 = st.columns(2)
+    st.write("**File STOR_CAR / Vendite Riconosciuti:**")
+    if file_caricati:
+        for f in file_caricati:
+            st.code(f)
+    else:
+        st.warning("Nessun file di storico vendite trovato nella cartella data/")
 
-    with st_c1:
-        st.subheader("Totale Pezzi per Filiale")
-        totali_filiali = df_master[list(MAPPA_FILIALI.keys())].sum().reset_index()
-        totali_filiali.columns = ['Codice', 'Quantità Totale']
-        totali_filiali['Filiale'] = totali_filiali['Codice'].map(MAPPA_FILIALI)
+    if not df_stor.empty:
+        st.subheader("Anteprima Dati Venduto Interpretati:")
+        st.write(f"Totale righe transazione caricate: **{len(df_stor):,}**")
         
-        st.bar_chart(totali_filiali.set_index('Filiale')['Quantità Totale'])
-
-    with st_c2:
-        st.subheader("Distribuzione Top 10 Reparti (L1)")
-        if 'CAT_L1_REPARTO' in df_master.columns:
-            tot_reparti = df_master.groupby('CAT_L1_REPARTO')[list(MAPPA_FILIALI.keys())].sum().sum(axis=1)
-            top10_reparti = tot_reparti.sort_values(ascending=False).head(10)
-            st.bar_chart(top10_reparti)
+        # Statistiche sulle date
+        date_valide = df_stor['DATA_PARSED'].dropna()
+        if not date_valide.empty:
+            st.info(f"📅 Data più antica rilevata: **{date_valide.min().strftime('%d/%m/%Y')}** | Data più recente: **{date_valide.max().strftime('%d/%m/%Y')}**")
+        
+        st.dataframe(df_stor.head(20), width="stretch")
