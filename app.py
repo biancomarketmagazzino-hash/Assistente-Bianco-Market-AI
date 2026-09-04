@@ -11,6 +11,42 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
+# CSS PERSONALIZZATO PER LA STAMPA
+# ---------------------------------------------------------
+st.markdown("""
+    <style>
+    @media print {
+        section[data-testid="stSidebar"], 
+        .stButton, 
+        .stDownloadButton, 
+        iframe,
+        footer, 
+        header {
+            display: none !important;
+        }
+        
+        .main .block-container {
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+        }
+
+        [data-testid="stDataFrame"], 
+        div[data-baseweb="data-table"],
+        div[role="grid"] {
+            overflow: visible !important;
+            height: auto !important;
+            max-height: none !important;
+        }
+
+        tr {
+            page-break-inside: avoid !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
 # MAPPATURA UFFICIALE FILIALI E CATEGORIE
 # ---------------------------------------------------------
 MAPPA_FILIALI = {
@@ -224,19 +260,13 @@ df_display = df_display.rename(columns={
     **colonne_mappate
 })
 
-# Impostiamo 'Codice Articolo' come indice per rimuovere i numeri di riga (0, 1, 2...)
-df_display_table = df_display.set_index('Codice Articolo')
+# Impostiamo Codice Articolo come Indice per nascondere la prima colonna con i numeri di riga (0, 1, 2...)
+df_display_no_index = df_display.set_index('Codice Articolo')
 
 # ---------------------------------------------------------
 # FUNZIONE STYLING / COLORAZIONE CONDIZIONALE
 # ---------------------------------------------------------
 def applica_colori_giacenza(df, colonne_numeric):
-    """
-    Applica una gradazione di colore blu alle quantità positive:
-    - Valori alti: Blu scuro con testo bianco.
-    - Valori bassi: Azzurro chiaro con testo nero.
-    - Valori <= 0: Sfondo trasparente/standard.
-    """
     v_max = df[colonne_numeric].max().max() if not df.empty else 1
     if pd.isna(v_max) or v_max <= 0:
         v_max = 1
@@ -246,11 +276,9 @@ def applica_colori_giacenza(df, colonne_numeric):
             return ''
         
         ratio = 0.15 + 0.70 * (val / v_max)
-        
         r = int(225 - (185 * ratio))
         g = int(238 - (150 * ratio))
         b = int(250 - (70 * ratio))
-        
         text_color = "white" if ratio > 0.55 else "black"
         
         return f'background-color: rgb({r}, {g}, {b}); color: {text_color}; font-weight: bold;'
@@ -258,25 +286,47 @@ def applica_colori_giacenza(df, colonne_numeric):
     return df.style.map(colora_cella, subset=colonne_numeric)
 
 # ---------------------------------------------------------
-# METRICHE E TABELLA FORMATTATA
+# METRICHE E VISUALIZZAZIONE TABELLA
 # ---------------------------------------------------------
 k1, k2 = st.columns(2)
 k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
 k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
-# Colonne numeriche da colorare (solo le filiali)
-colonne_da_colorare = nomi_filiali_selezionate
+styled_df = applica_colori_giacenza(df_display_no_index, nomi_filiali_selezionate)
 
-# Applicazione dello stile
-styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
-
-st.dataframe(styled_df, use_container_width=True, height=550)
-
-# Export CSV
-csv_data = df_display.to_csv(index=False).encode('latin1')
-st.download_button(
-    label="📥 Scarica Tabella in CSV",
-    data=csv_data,
-    file_name="Giacenze_Filiali_Bianco_Market.csv",
-    mime="text/csv"
+st.dataframe(
+    styled_df, 
+    use_container_width=True, 
+    height=550
 )
+
+# ---------------------------------------------------------
+# PULSANTI D'AZIONE: DOWNLOAD ED STAMPA
+# ---------------------------------------------------------
+col_btn1, col_btn2 = st.columns([1, 4])
+
+with col_btn1:
+    csv_data = df_display.to_csv(index=False).encode('latin1')
+    st.download_button(
+        label="📥 Scarica CSV",
+        data=csv_data,
+        file_name="Giacenze_Filiali_Bianco_Market.csv",
+        mime="text/csv"
+    )
+
+with col_btn2:
+    st.components.v1.html(
+        """
+        <button onclick="window.parent.print()" style="
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            padding: 9px 18px;
+            font-size: 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+        ">🖨️ Stampa Rapida Tabella</button>
+        """,
+        height=45
+    )
