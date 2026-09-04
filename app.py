@@ -164,6 +164,17 @@ sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
 marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m != '-']) if 'CODICE_MAR' in df_master.columns else []
 sel_marca = st.sidebar.multiselect("Marca", marche)
 
+# CONTROLLO SE ALMENO UN FILTRO È ATTIVO
+ha_filtri_attivi = bool(
+    search_term.strip() or 
+    sel_l1 or 
+    sel_l2 or 
+    sel_l3 or 
+    sel_l4 or 
+    sel_fornitore or 
+    sel_marca
+)
+
 # APPLICAZIONE FILTRI
 df_filtered = df_master.copy()
 
@@ -231,12 +242,6 @@ df_display_table = df_display.set_index('Codice Articolo')
 # FUNZIONE STYLING / COLORAZIONE CONDIZIONALE
 # ---------------------------------------------------------
 def applica_colori_giacenza(df, colonne_numeric):
-    """
-    Applica una gradazione di colore blu alle quantità positive:
-    - Valori alti: Blu scuro con testo bianco.
-    - Valori bassi: Azzurro chiaro con testo nero.
-    - Valori <= 0: Sfondo trasparente/standard.
-    """
     v_max = df[colonne_numeric].max().max() if not df.empty else 1
     if pd.isna(v_max) or v_max <= 0:
         v_max = 1
@@ -258,25 +263,25 @@ def applica_colori_giacenza(df, colonne_numeric):
     return df.style.map(colora_cella, subset=colonne_numeric)
 
 # ---------------------------------------------------------
-# METRICHE E TABELLA FORMATTATA
+# METRICHE E VISUALIZZAZIONE CONDIZIONATA
 # ---------------------------------------------------------
-k1, k2 = st.columns(2)
-k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
-k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
+if not ha_filtri_attivi:
+    st.info("👈 **Seleziona un filtro o digita un termine di ricerca nel menu a sinistra per visualizzare la tabella dei prodotti.**")
+else:
+    k1, k2 = st.columns(2)
+    k1.metric("Totale Articoli Trovati", f"{len(df_display):,}")
+    k2.metric("Quantità Totale Giacenza", f"{df_display['Quantità Totale Selezionata'].sum():,}")
 
-# Colonne numeriche da colorare (solo le filiali)
-colonne_da_colorare = nomi_filiali_selezionate
+    colonne_da_colorare = nomi_filiali_selezionate
+    styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
 
-# Applicazione dello stile
-styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
+    st.dataframe(styled_df, use_container_width=True, height=550)
 
-st.dataframe(styled_df, use_container_width=True, height=550)
-
-# Export CSV
-csv_data = df_display.to_csv(index=False).encode('latin1')
-st.download_button(
-    label="📥 Scarica Tabella in CSV",
-    data=csv_data,
-    file_name="Giacenze_Filiali_Bianco_Market.csv",
-    mime="text/csv"
-)
+    # Export CSV
+    csv_data = df_display.to_csv(index=False).encode('latin1')
+    st.download_button(
+        label="📥 Scarica Tabella in CSV",
+        data=csv_data,
+        file_name="Giacenze_Filiali_Bianco_Market.csv",
+        mime="text/csv"
+    )
