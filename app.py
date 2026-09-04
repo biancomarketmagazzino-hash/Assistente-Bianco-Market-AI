@@ -367,18 +367,18 @@ with tab_giacenze:
             colonne_da_colorare = nomi_filiali_selezionate
             styled_df = applica_colori_giacenza(df_display_table, colonne_da_colorare)
 
-            st.dataframe(styled_df, use_container_width=True, height=550)
+            st.dataframe(styled_df, width="stretch", height=550)
 
             c1, c2 = st.columns(2)
 
             with c1:
                 # ✅ FIX ENCODING UTF-8-SIG PER EVITARE UNICODEERROR
                 csv_data = df_display.to_csv(index=False, sep=';').encode('utf-8-sig')
-                st.download_button("📥 Scarica in CSV", csv_data, "Giacenze_Bianco_Market.csv", "text/csv", use_container_width=True)
+                st.download_button("📥 Scarica in CSV", csv_data, "Giacenze_Bianco_Market.csv", "text/csv", width="stretch")
 
             with c2:
                 excel_data = convert_df_to_excel(df_display, sheet_name='Giacenze')
-                st.download_button("📊 Scarica in Excel (.xlsx)", excel_data, "Giacenze_Bianco_Market.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                st.download_button("📊 Scarica in Excel (.xlsx)", excel_data, "Giacenze_Bianco_Market.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
 
 # =========================================================
 # TAB 2: GESTIONE ORDINI & REINTEGRO MULTIANNO
@@ -455,7 +455,7 @@ with tab_ordini:
             with ex3:
                 o_l4 = st.multiselect("Tessuto/Materiale (L4)", CATEGORIE_L4, key="o_l4")
 
-        btn_cerca = st.form_submit_button("🔍 ESEGUI CALCOLO BATTUTE / AGGIORNA TABELLA", use_container_width=True)
+        btn_cerca = st.form_submit_button("🔍 ESEGUI CALCOLO BATTUTE / AGGIORNA TABELLA", width="stretch")
 
     df_ord_filtered = applica_filtri_catalogo(df_master, o_search, o_l1, o_l2, o_l3, o_l4, o_forn, o_marca)
 
@@ -515,7 +515,7 @@ with tab_ordini:
             m2.metric("Totale Battute Sommate (STOR_CAR)", f"{df_ord_display['Totale Battute/Venduto (Pz)'].sum():,} pz")
             m3.metric("TOTALE PROPOSTA ORDINE", f"{df_ord_display['Quantità da Ordinare (Pz)'].sum():,} pz")
 
-            st.dataframe(df_ord_display.set_index('Codice Articolo'), use_container_width=True, height=480)
+            st.dataframe(df_ord_display.set_index('Codice Articolo'), width="stretch", height=480)
 
             o_col1, o_col2 = st.columns(2)
             with o_col1:
@@ -526,7 +526,7 @@ with tab_ordini:
                     csv_ord, 
                     "Ordine_Reintegro_STOR_CAR.csv", 
                     "text/csv", 
-                    use_container_width=True
+                    width="stretch"
                 )
             with o_col2:
                 excel_ord = convert_df_to_excel(df_ord_display, sheet_name='Proposta Ordine')
@@ -535,7 +535,7 @@ with tab_ordini:
                     excel_ord, 
                     "Ordine_Reintegro_STOR_CAR.xlsx", 
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                    use_container_width=True
+                    width="stretch"
                 )
 
 # =========================================================
