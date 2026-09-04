@@ -30,13 +30,28 @@ FILIALI_MAP = {
 }
 
 # ---------------------------------------------------------
-# FUNZIONI DI CARICAMENTO DATI
+# UTILITY PER RICERCA FILE FLESSIBILE (FLEXIBLE FILE FINDER)
+# ---------------------------------------------------------
+def find_file(filename, possible_dirs=None):
+    """Cerca un file ignorando la differenza tra maiuscole/minuscole."""
+    if possible_dirs is None:
+        possible_dirs = ["data/current", "data", "."]
+        
+    for d in possible_dirs:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if f.lower() == filename.lower():
+                    return os.path.join(d, f)
+    return None
+
+# ---------------------------------------------------------
+# FUNZIONI DI CARICAMENTO DATI CACHATE
 # ---------------------------------------------------------
 
 @st.cache_data(ttl=3600)
 def load_articoli():
-    path = "data/current/ARTICOLI.TXT"
-    if not os.path.exists(path):
+    path = find_file("ARTICOLI.TXT")
+    if not path:
         return pd.DataFrame()
     
     df = pd.read_csv(
@@ -77,8 +92,8 @@ def load_articoli():
 
 @st.cache_data(ttl=3600)
 def load_giacenze():
-    path = "data/current/Sit_filiali.TXT"
-    if not os.path.exists(path):
+    path = find_file("Sit_filiali.TXT")
+    if not path:
         return pd.DataFrame()
     
     df = pd.read_csv(
@@ -107,10 +122,21 @@ def load_giacenze():
 def load_storico_vendite(anni_selezionati):
     dfs = []
     for anno in anni_selezionati:
-        path = f"data/storici/{anno}/STOR_CAR.TXT"
-        if os.path.exists(path):
+        possible_paths = [
+            f"data/storici/{anno}/STOR_CAR.TXT",
+            f"data/storici/{anno}/stor_car.txt",
+            f"storici/{anno}/STOR_CAR.TXT",
+            f"{anno}/STOR_CAR.TXT"
+        ]
+        path_found = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                path_found = p
+                break
+                
+        if path_found:
             try:
-                df = pd.read_csv(path, sep='\t', header=None, encoding='latin1', on_bad_lines='skip', dtype=str)
+                df = pd.read_csv(path_found, sep='\t', header=None, encoding='latin1', on_bad_lines='skip', dtype=str)
                 df = df[[0, 1, 4, 5, 6, 9]].copy()
                 df.columns = ['Tipo_Movimento', 'Data', 'CODICE_ART', 'Cod_Filiale_Stor', 'Prezzo', 'Quantita']
                 df['Anno'] = str(anno)
@@ -132,7 +158,7 @@ def load_storico_vendite(anni_selezionati):
     return full_df
 
 # ---------------------------------------------------------
-# INTERFACCIA E LOGICA APPLICAZIONE
+# INTERFACCIA E LOGICA PRINCIPALE
 # ---------------------------------------------------------
 
 st.title("🛍️ Bianco Market - Assistant & Inventory AI")
@@ -141,35 +167,42 @@ st.markdown("Sistema integrato per la gestione esistenze, analisi vendite e rias
 df_art = load_articoli()
 df_giac = load_giacenze()
 
+# Controllo presenza dati senza blocco irreversibile dell'app
 if df_art.empty or df_giac.empty:
-    st.error("⚠️ File dati non trovati. Verifica che `data/current/ARTICOLI.TXT` e `data/current/Sit_filiali.TXT` siano presenti nel repository.")
+    st.warning("⚠️ File dati non trovati. Assicurati che i file `ARTICOLI.TXT` e `Sit_filiali.TXT` siano stati caricati su GitHub nella cartella `data/current/`.")
+    st.info("💡 Struttura cartelle richiesta:\n"
+            "- `data/current/ARTICOLI.TXT`\n"
+            "- `data/current/Sit_filiali.TXT`\n"
+            "- `data/storici/2026/STOR_CAR.TXT`")
     st.stop()
 
-# Join Master
+# Join Master Data
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
-# SIDEBAR: FILTRI
+# ---------------------------------------------------------
+# SIDEBAR - FILTRI CATOLOGO
+# ---------------------------------------------------------
 st.sidebar.header("🔍 Filtri Avanzati Catalogo")
 
-sedi = sorted([s for s in df_master['CAT_LEVEL_5'].unique() if s])
+sedi = sorted([s for s in df_master['CAT_LEVEL_5'].unique() if s]) if 'CAT_LEVEL_5' in df_master.columns else []
 sel_sede = st.sidebar.multiselect("Sede Magazzino (Cat. 5)", sedi)
 
-macro = sorted([m for m in df_master['CODICE_CAT'].unique() if m])
+macro = sorted([m for m in df_master['CODICE_CAT'].unique() if m]) if 'CODICE_CAT' in df_master.columns else []
 sel_macro = st.sidebar.multiselect("Macro Categoria (Codice Cat)", macro)
 
-gruppi = sorted([g for g in df_master['GRUPPO'].unique() if g])
+gruppi = sorted([g for g in df_master['GRUPPO'].unique() if g]) if 'GRUPPO' in df_master.columns else []
 sel_gruppo = st.sidebar.multiselect("Sotto Categoria (Gruppo)", gruppi)
 
-sottogruppi = sorted([sg for sg in df_master['SOTTOGRUPPO'].unique() if sg])
+sottogruppi = sorted([sg for sg in df_master['SOTTOGRUPPO'].unique() if sg]) if 'SOTTOGRUPPO' in df_master.columns else []
 sel_sottogruppo = st.sidebar.multiselect("Genere / Taglia (Sottogruppo)", sottogruppi)
 
-cat4 = sorted([c for c in df_master['CAT_LEVEL_4'].unique() if c])
+cat4 = sorted([c for c in df_master['CAT_LEVEL_4'].unique() if c]) if 'CAT_LEVEL_4' in df_master.columns else []
 sel_cat4 = st.sidebar.multiselect("Materiale / Tessuto (Cat. 4)", cat4)
 
-fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f])
+fornitori = sorted([f for f in df_master['CODICE_FOR'].unique() if f]) if 'CODICE_FOR' in df_master.columns else []
 sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
 
-marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m])
+marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m]) if 'CODICE_MAR' in df_master.columns else []
 sel_marca = st.sidebar.multiselect("Marca", marche)
 
 search_term = st.sidebar.text_input("🔎 Cerca per Descrizione o Codice ART", "")
@@ -196,7 +229,9 @@ if search_term:
         df_filtered['CODICE_ART'].str.contains(search_term, case=False, na=False)
     ]
 
-# TABS
+# ---------------------------------------------------------
+# TABS SCHERMATE PRINCIPALI
+# ---------------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "📦 Esistenze & Giacenze", 
     "📈 Analisi Vendite", 
@@ -216,28 +251,35 @@ with tab1:
     )
     
     if filiali_scelte:
-        c_cols = [FILIALI_MAP[f]['col_c'] for f in filiali_scelte]
-        df_filtered['Totale_Giacenza_Selezionata'] = df_filtered[c_cols].sum(axis=1)
+        c_cols = [FILIALI_MAP[f]['col_c'] for f in filiali_scelte if FILIALI_MAP[f]['col_c'] in df_filtered.columns]
+        df_filtered['Totale_Giacenza_Selezionata'] = df_filtered[c_cols].sum(axis=1) if c_cols else 0
         
         kpi1, kpi2, kpi3 = st.columns(3)
         kpi1.metric("Articoli Filtrati", f"{len(df_filtered):,}")
         kpi2.metric("Pezzi Totali in Giacenza", f"{df_filtered['Totale_Giacenza_Selezionata'].sum():,}")
         kpi3.metric("Filiali Incluse", len(filiali_scelte))
         
-        cols_to_show = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CODICE_CAT', 'GRUPPO', 'SOTTOGRUPPO', 'CAT_LEVEL_4', 'CAT_LEVEL_5'] + c_cols + ['Totale_Giacenza_Selezionata']
+        cols_base = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CODICE_CAT', 'GRUPPO', 'SOTTOGRUPPO', 'CAT_LEVEL_4', 'CAT_LEVEL_5']
+        cols_presenti = [c for c in cols_base if c in df_filtered.columns]
+        cols_to_show = cols_presenti + c_cols + ['Totale_Giacenza_Selezionata']
+        
         st.dataframe(df_filtered[cols_to_show], use_container_width=True, height=400)
         
         st.subheader("📊 Ripartizione Giacenze per Punto Vendita")
-        giac_totali = {FILIALI_MAP[f]['nome']: df_filtered[FILIALI_MAP[f]['col_c']].sum() for f in filiali_scelte}
+        giac_totali = {
+            FILIALI_MAP[f]['nome']: df_filtered[FILIALI_MAP[f]['col_c']].sum() 
+            for f in filiali_scelte if FILIALI_MAP[f]['col_c'] in df_filtered.columns
+        }
         
-        fig = px.bar(
-            x=list(giac_totali.keys()), 
-            y=list(giac_totali.values()),
-            labels={'x': 'Punto Vendita', 'y': 'Giacenza (Pezzi)'},
-            title="Distribuzione Pezzi tra le Filiali",
-            color_discrete_sequence=['#0056b3']
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        if giac_totali:
+            fig = px.bar(
+                x=list(giac_totali.keys()), 
+                y=list(giac_totali.values()),
+                labels={'x': 'Punto Vendita', 'y': 'Giacenza (Pezzi)'},
+                title="Distribuzione Pezzi tra le Filiali",
+                color_discrete_sequence=['#0056b3']
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 # TAB 2: VENDITE
 with tab2:
@@ -277,7 +319,7 @@ with tab2:
                 )
                 st.plotly_chart(fig_trend, use_container_width=True)
         else:
-            st.info("Nessun dato storico trovato nelle cartelle selezionate.")
+            st.info("Nessun dato storico trovato per gli anni selezionati.")
 
 # TAB 3: RIASSORTIMENTO
 with tab3:
@@ -297,17 +339,19 @@ with tab3:
     col_s = FILIALI_MAP[filiale_target]['col_s']
     
     df_reorder = df_filtered.copy()
-    df_reorder['Giacenza_Attuale'] = df_reorder[col_c]
-    df_reorder['Scorta_Minima_Base'] = df_reorder[col_s]
-    df_reorder['Scorta_Calcolata'] = (df_reorder['Scorta_Minima_Base'] * (1 + percentuale_scorta/100)).astype(int)
-    df_reorder['Proposta_Ordine'] = (df_reorder['Scorta_Calcolata'] - df_reorder['Giacenza_Attuale']).clip(lower=0)
-    
-    df_da_ordinare = df_reorder[df_reorder['Proposta_Ordine'] > 0]
-    
-    st.warning(f"⚠️ Trovati **{len(df_da_ordinare)}** articoli da riassortire per **{FILIALI_MAP[filiale_target]['nome']}**")
-    
-    cols_ordine = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'GRUPPO', 'SOTTOGRUPPO', 'Giacenza_Attuale', 'Scorta_Minima_Base', 'Proposta_Ordine']
-    st.dataframe(df_da_ordinare[cols_ordine], use_container_width=True)
+    if col_c in df_reorder.columns and col_s in df_reorder.columns:
+        df_reorder['Giacenza_Attuale'] = df_reorder[col_c]
+        df_reorder['Scorta_Minima_Base'] = df_reorder[col_s]
+        df_reorder['Scorta_Calcolata'] = (df_reorder['Scorta_Minima_Base'] * (1 + percentuale_scorta/100)).astype(int)
+        df_reorder['Proposta_Ordine'] = (df_reorder['Scorta_Calcolata'] - df_reorder['Giacenza_Attuale']).clip(lower=0)
+        
+        df_da_ordinare = df_reorder[df_reorder['Proposta_Ordine'] > 0]
+        
+        st.warning(f"⚠️ Trovati **{len(df_da_ordinare)}** articoli da riassortire per **{FILIALI_MAP[filiale_target]['nome']}**")
+        
+        cols_ordine_base = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'GRUPPO', 'SOTTOGRUPPO', 'Giacenza_Attuale', 'Scorta_Minima_Base', 'Proposta_Ordine']
+        cols_ordine = [c for c in cols_ordine_base if c in df_da_ordinare.columns]
+        st.dataframe(df_da_ordinare[cols_ordine], use_container_width=True)
 
 # TAB 4: REPORTISTICA
 with tab4:
@@ -327,10 +371,13 @@ with tab4:
             mime="text/csv"
         )
     else:
-        csv_ord = df_da_ordinare[cols_ordine].to_csv(index=False).encode('latin1')
-        st.download_button(
-            label="📥 Scarica Ordine Suggerito in CSV",
-            data=csv_ord,
-            file_name=f"Ordine_Riassortimento_{FILIALI_MAP[filiale_target]['nome']}.csv",
-            mime="text/csv"
-        )
+        if 'df_da_ordinare' in locals() and not df_da_ordinare.empty:
+            csv_ord = df_da_ordinare[cols_ordine].to_csv(index=False).encode('latin1')
+            st.download_button(
+                label="📥 Scarica Ordine Suggerito in CSV",
+                data=csv_ord,
+                file_name=f"Ordine_Riassortimento_{FILIALI_MAP[filiale_target]['nome']}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("Nessun ordine suggerito presente da esportare per la filiale selezionata.")
