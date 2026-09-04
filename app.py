@@ -30,10 +30,9 @@ FILIALI_MAP = {
 }
 
 # ---------------------------------------------------------
-# UTILITY PER RICERCA FILE FLESSIBILE (FLEXIBLE FILE FINDER)
+# UTILITY PER RICERCA FILE FLESSIBILE
 # ---------------------------------------------------------
 def find_file(filename, possible_dirs=None):
-    """Cerca un file ignorando la differenza tra maiuscole/minuscole."""
     if possible_dirs is None:
         possible_dirs = ["data/current", "data", "."]
         
@@ -167,7 +166,6 @@ st.markdown("Sistema integrato per la gestione esistenze, analisi vendite e rias
 df_art = load_articoli()
 df_giac = load_giacenze()
 
-# Controllo presenza dati senza blocco irreversibile dell'app
 if df_art.empty or df_giac.empty:
     st.warning("⚠️ File dati non trovati. Assicurati che i file `ARTICOLI.TXT` e `Sit_filiali.TXT` siano stati caricati su GitHub nella cartella `data/current/`.")
     st.info("💡 Struttura cartelle richiesta:\n"
@@ -180,13 +178,18 @@ if df_art.empty or df_giac.empty:
 df_master = pd.merge(df_art, df_giac, on='CODICE_ART', how='left')
 
 # ---------------------------------------------------------
-# SIDEBAR - FILTRI CATOLOGO
+# SIDEBAR - FILTRI CATALOGO (PRIMO FILTRO: RICERCA TESTUALE)
 # ---------------------------------------------------------
 st.sidebar.header("🔍 Filtri Avanzati Catalogo")
 
-sedi = sorted([s for s in df_master['CAT_LEVEL_5'].unique() if s]) if 'CAT_LEVEL_5' in df_master.columns else []
-sel_sede = st.sidebar.multiselect("Sede Magazzino (Cat. 5)", sedi)
+# 1. PRIMO FILTRO: Ricerca Avanzata Multiparola
+search_term = st.sidebar.text_input(
+    "🔎 Ricerca per Descrizione o Codice ART", 
+    "", 
+    placeholder="Es: ACCAPP DESID"
+)
 
+# 2. ALTRI FILTRI CATALOGO
 macro = sorted([m for m in df_master['CODICE_CAT'].unique() if m]) if 'CODICE_CAT' in df_master.columns else []
 sel_macro = st.sidebar.multiselect("Macro Categoria (Codice Cat)", macro)
 
@@ -205,12 +208,21 @@ sel_fornitore = st.sidebar.multiselect("Fornitore", fornitori)
 marche = sorted([m for m in df_master['CODICE_MAR'].unique() if m]) if 'CODICE_MAR' in df_master.columns else []
 sel_marca = st.sidebar.multiselect("Marca", marche)
 
-search_term = st.sidebar.text_input("🔎 Cerca per Descrizione o Codice ART", "")
-
+# APPLICAZIONE FILTRI
 df_filtered = df_master.copy()
 
-if sel_sede:
-    df_filtered = df_filtered[df_filtered['CAT_LEVEL_5'].isin(sel_sede)]
+# Logica di ricerca testuale flessibile (AND tra tutte le parole digitate)
+if search_term.strip():
+    words = search_term.strip().split()
+    # Stringa combinata su cui cercare (Descrizione + Codice Articolo)
+    combined_text = df_filtered['DESCRIZION'].fillna('') + ' ' + df_filtered['CODICE_ART'].fillna('')
+    
+    mask = pd.Series(True, index=df_filtered.index)
+    for word in words:
+        mask = mask & combined_text.str.contains(word, case=False, regex=False)
+        
+    df_filtered = df_filtered[mask]
+
 if sel_macro:
     df_filtered = df_filtered[df_filtered['CODICE_CAT'].isin(sel_macro)]
 if sel_gruppo:
@@ -223,11 +235,6 @@ if sel_fornitore:
     df_filtered = df_filtered[df_filtered['CODICE_FOR'].isin(sel_fornitore)]
 if sel_marca:
     df_filtered = df_filtered[df_filtered['CODICE_MAR'].isin(sel_marca)]
-if search_term:
-    df_filtered = df_filtered[
-        df_filtered['DESCRIZION'].str.contains(search_term, case=False, na=False) |
-        df_filtered['CODICE_ART'].str.contains(search_term, case=False, na=False)
-    ]
 
 # ---------------------------------------------------------
 # TABS SCHERMATE PRINCIPALI
@@ -259,7 +266,7 @@ with tab1:
         kpi2.metric("Pezzi Totali in Giacenza", f"{df_filtered['Totale_Giacenza_Selezionata'].sum():,}")
         kpi3.metric("Filiali Incluse", len(filiali_scelte))
         
-        cols_base = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CODICE_CAT', 'GRUPPO', 'SOTTOGRUPPO', 'CAT_LEVEL_4', 'CAT_LEVEL_5']
+        cols_base = ['CODICE_ART', 'DESCRIZION', 'CODICE_FOR', 'CODICE_MAR', 'CODICE_CAT', 'GRUPPO', 'SOTTOGRUPPO', 'CAT_LEVEL_4']
         cols_presenti = [c for c in cols_base if c in df_filtered.columns]
         cols_to_show = cols_presenti + c_cols + ['Totale_Giacenza_Selezionata']
         
